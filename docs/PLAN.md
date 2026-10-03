@@ -9,14 +9,13 @@ open questions are recorded so a future session can pick up cold.
 > Board facts: Lesson 01 "The hardware". Reusable workflow + gotchas: the
 > `esp32-board-bringup` skill.
 >
-> **Current position (2026-10-03):** **Lesson 03 Parts 1–3 done** — internal I²C
-> bus surveyed via `M5.In_I2C` (port 1; never `Wire.begin(3,2)`), hand-written SHT40
-> driver (CRC verified, ~23.6 °C / 53 %RH), RTC set to UTC with BST display and an
-> edge-synced system clock (±10 ms vs host). Written up in
-> `docs/lesson-03-sensors-and-rtc.md`. **NEXT: Lesson 03 Part 4** — e-paper
-> dashboard (time, T, RH) + cold-refresh experiment (log T next to BUSY REFRESH ms).
+> **Current position (2026-10-03):** **Lesson 03 complete** — I²C survey, SHT40
+> driver class, RTC (UTC + BST, edge-synced), e-paper dashboard, and the **fridge
+> experiment**: refresh got slightly *faster* when cold (+3.2 ms/°C, 49 ms over
+> 8.4–23.5 °C) — the "cold eats the 20 s timeout" hypothesis is not supported down to
+> 8.4 °C. **NEXT: choose Lesson 04** — the deep-sleep dashboard is the natural step.
 >
-> `src/main.cpp` currently holds the **RTC stage** (`stages/lesson3_rtc.cpp`).
+> `src/main.cpp` currently holds the **dashboard** (`stages/lesson3_dashboard.cpp`).
 
 ---
 
@@ -40,17 +39,16 @@ open questions are recorded so a future session can pick up cold.
 - [x] **Lesson 01** written.
 - [x] **Skill updated** — phase 4 vendor-library question, phase 4b firmware
       backup, gotcha 25(b) "who owns the bus".
-- [x] **Lesson 03 Parts 1–3** — I²C survey, SHT40 by hand, RTC (UTC + BST).
+- [x] **Lesson 03** — I²C survey, SHT40 by hand (now `Sht40` class), RTC (UTC + BST),
+      dashboard, fridge experiment (`docs/data/fridge-2026-10-03.csv`).
 - [x] **Lesson 02** — driver reading, BUSY timeline, PSRAM check, palette +
       packing, dithering, simulator, and **Part 5: all predictions confirmed on
       the glass**; dithering costs ~0.6 s CPU (+567 ms fast, +606 ms text/quality).
 
 ## ▶ Next
 
-- [ ] **Lesson 03 Part 4** — dashboard: UK time, temperature, humidity on the
-      e-paper (fastest mode, exact inks), refreshed on a schedule / button; log
-      temperature + BUSY REFRESH duration for the cold-refresh experiment; measure
-      SHT40 self-heating and RTC/system-clock drift over hours.
+- [ ] **Lesson 04 — pick one** (suggested: deep-sleep dashboard — wake on RTC timer or
+      button, sample, refresh, sleep; measure real current; RTC "fully off" test).
 
 ## Later (candidates, not yet ordered)
 
@@ -96,4 +94,5 @@ open questions are recorded so a future session can pick up cold.
 - Why does the booster command `0x06` use `…0x17` at init but `…0x27` before a
   refresh? (Unexplained in the driver.)
 - What do the "CMDH" bytes (`0xAA 0x49 0x55 …`) and `0x84` do? (Vendor magic.)
-- Does cold slow the refresh toward the driver's 20 s timeout? (Sensors stage.)
+- Does the controller switch waveform below ~8 °C? (Fridge test reached only 8.4 °C in
+  the case; refresh was 49 ms *faster* cold. Don't use a freezer.)

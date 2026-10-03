@@ -6,7 +6,7 @@ bus, write our own SHT40 temperature/humidity driver, and get the RX8130CE
 real-time clock keeping correct UK time — then combine them on the e-paper.
 
 > Audience note: Python / CircuitPython background, learning C++.
-> **Status:** Parts 1–3 done; Part 4 (dashboard + cold-refresh experiment) next.
+> **Status:** complete (Parts 1–4).
 
 ---
 
@@ -20,6 +20,8 @@ real-time clock keeping correct UK time — then combine them on the e-paper.
 6. Find a real library bug (a stale `char*`) and work around it without editing
    the library.
 7. Synchronise two clocks properly ("sync on the edge").
+8. Design an e-paper dashboard, avoid the static-init-order trap, and test a
+   hypothesis with an experiment — and accept the answer when it's "no".
 
 ---
 
@@ -224,7 +226,90 @@ need the RX8130 datasheet — recorded, not guessed.
 
 ---
 
-## Part 4 — Dashboard + the cold-refresh experiment *(next)*
+## Part 4 — Dashboard + the cold-refresh experiment (`stages/lesson3_dashboard.cpp`)
+
+### Design — e-paper changes the usual answers
+
+- **No clock on screen.** A display refreshed every few minutes is stale most of
+  the time; it shows **"Updated 17:39 BST"** instead — honest, and you can see how
+  fresh the readings are.
+- **Refresh when it matters:** every 10 min; early if the temperature moved
+  ≥ 0.5 °C, but never closer than 2 min; button C forces one.
+- **Exact inks, `fastest` mode** (Lesson 02). Temperature ink by band: BLUE < 18 °C,
+  BLACK 18–25, RED > 25.
+- **LEDs off** except red during a refresh — an ambient display shouldn't glow.
+- **No `°` glyph** in the 7-bit free fonts — it's drawn as a small ring.
+- **The SHT40 driver became a class** (`src/Sht40.h/.cpp`) now that it is reused.
+- **A RAM log** of every refresh (time, T, RH, BUSY REFRESH ms, total ms), because in
+  the fridge there is no USB; serial `LOG` dumps it as CSV afterwards.
+
+### Bug — crash loop: the static initialization order fiasco
+
+```
+Guru Meditation Error: Core 1 panic'ed (LoadProhibited) ... EXCVADDR: 0x00000000
+```
+
+`addr2line` turned the backtrace into source lines:
+`I2C_Class::start ← Sht40::exchange ← Sht40::serialNumber ← setup()`. The cause:
+
+```cpp
+static Sht40 sht(M5.In_I2C);   // ✗ crashes
+static Sht40 sht(m5::In_I2C);  // ✓
+```
+
+M5Unified declares `I2C_Class& In_I2C = m5::In_I2C;` — a reference *member inside the
+global `M5` object*, set only when `M5` is constructed. C++ constructs globals
+**before `setup()`**, and the order **between different `.cpp` files is
+unspecified**. `sht` was built first and copied a member that still read 0.
+
+> **C++ for Pythonistas:** Python runs module-level code in import order. C++ gives
+> no such guarantee across files. **Rule:** a global's constructor must never read
+> another file's global object. Bind to something whose *address* is fixed at link
+> time (`m5::In_I2C`), or create the object inside `setup()`.
+
+### The fridge experiment
+
+The board ran on battery in a sealed bag in the fridge for ~27 minutes, then warmed
+up (still bagged) before being opened and plugged back in. 22 refreshes were logged
+(`docs/data/fridge-2026-10-03.csv`):
+
+| # | Local time | T (°C) | RH (%) | BUSY REFRESH (ms) | Why |
+|---|---|---|---|---|---|
+| 1 | 17:39:02 | 23.49 | 53.5 | 14,416 | boot |
+| 3 | 17:44:34 | 19.25 | 52.9 | 14,394 | early |
+| 5 | 17:49:06 | 14.81 | 54.3 | 14,378 | early |
+| 9 | 17:58:11 | 10.70 | 55.3 | 14,371 | early |
+| 13 | 18:09:16 | **8.43** | 55.4 | **14,367** | early (coldest) |
+| 15 | 18:16:18 | 13.64 | 56.2 | 14,384 | early (warming) |
+| 19 | 18:25:23 | 19.07 | 53.8 | 14,402 | early |
+| 22 | 18:32:52 | 21.14 | 56.9 | 14,408 | early |
+
+**Result — the hypothesis was wrong (down to 8.4 °C).** The prediction from
+Lesson 02 was that cold would *slow* the refresh toward the driver's 20 s timeout.
+Instead the refresh got slightly **faster** when cold: a clean straight line,
+**+3.2 ms per °C** (R² = 0.95), only **49 ms (0.34 %)** across 15 °C. At the
+coldest point the headroom was **5,633 ms** — unchanged in practice.
+
+Interpreting it honestly:
+
+- **What's measured:** BUSY LOW time vs the SHT40's air temperature *inside the case*.
+  The panel's own temperature lags the air, and the true fridge (~4 °C) was never
+  reached inside the case in 27 minutes.
+- **A plausible explanation (not verified):** the controller times its waveform with
+  an internal oscillator whose frequency shifts slightly with temperature — a small,
+  smooth effect, as seen. Real e-paper controllers often also switch to different
+  waveforms below some temperature; if this one does, the step lies **below 8.4 °C**.
+- **Conclusion:** "cold eats the timeout headroom" is **not supported in 8–24 °C**.
+  Below that is untested — and the freezer is off-limits (panel operating range,
+  LiPo charging below 0 °C).
+
+**Humidity behaved like physics says.** As the bag cooled, RH rose (52 → 55.6 %):
+the same water vapour at a lower temperature is closer to saturation. Air in a small
+bag holds only milligrams of water, so the risk was always the *removal* step, which
+the warm-up-in-the-bag rule covered.
+
+**The schedule worked as designed:** early refreshes came every **136 s** (the 2-minute
+floor + the 16 s refresh) while the temperature was changing.
 
 ---
 
@@ -236,6 +321,8 @@ need the RX8130 datasheet — recorded, not guessed.
 | `stages/lesson3_sht40.cpp` | hand-written SHT40 driver with CRC self-test |
 | `stages/lesson3_rtc.cpp` | RTC read/set, UTC↔BST, edge-synced system clock |
 | `tools/rtc_sync.py` | set the RTC from the host's UTC; measure host–board offset |
+| `stages/lesson3_dashboard.cpp`, `src/Sht40.*` | the dashboard; SHT40 driver class |
+| `docs/data/fridge-2026-10-03.csv` | the fridge experiment's 22 refreshes |
 
 ## Glossary
 
@@ -249,3 +336,6 @@ need the RX8130 datasheet — recorded, not guessed.
 - **UTC / POSIX TZ rule** — universal time / a string describing a zone + DST rules.
 - **Epoch** — seconds since 1970-01-01 00:00 UTC.
 - **Stale (dangling) pointer** — an address whose contents changed or were freed.
+- **Static initialization order fiasco** — globals in different files built in an
+  unspecified order; one reading another during construction can see garbage.
+- **R²** — how well a straight line fits the data (1.0 = perfectly).
