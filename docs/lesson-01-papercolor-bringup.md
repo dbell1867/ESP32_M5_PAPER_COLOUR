@@ -495,7 +495,7 @@ Plus one "doc bug": G1 is not card-detect.
 
 Stage snapshots are in `stages/`: `stage2_first_light.cpp`,
 `stage3a_button_probe.cpp`, `stage3b_sd_probe.cpp`, `stage3c_buttons_led.cpp`.
-`src/main.cpp` currently holds Stage 3c.
+(`src/main.cpp` moves on with later lessons — see `docs/PLAN.md` for what it holds now.)
 
 ---
 
