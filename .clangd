@@ -1,0 +1,6 @@
+# Editor-only (clangd): strip GCC/Xtensa flags clang doesn't understand.
+# Builds use PlatformIO's GCC and ignore this file entirely.
+CompileFlags:
+  Remove: [-mlongcalls, -mdisable-hardware-atomics, -fstrict-volatile-bitfields, -fno-tree-switch-conversion, -mtext-section-literals, -fno-shrink-wrap, -mfix-esp32-psram-cache-issue]
+Diagnostics:
+  Suppress: [drv_unknown_argument, drv_unknown_argument_with_suggestion]

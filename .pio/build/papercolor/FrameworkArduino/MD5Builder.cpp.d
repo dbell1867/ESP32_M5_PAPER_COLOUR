@@ -1,0 +1,20 @@
+.pio/build/papercolor/FrameworkArduino/MD5Builder.cpp.o: \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32/cores/esp32/MD5Builder.cpp \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32/cores/esp32/HEXBuilder.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32/cores/esp32/WString.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32/cores/esp32/pgmspace.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/newlib/platform_include/ctype.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32/cores/esp32/Stream.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32/cores/esp32/Print.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/newlib/platform_include/stdio.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32/cores/esp32/WString.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32/cores/esp32/Printable.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32/cores/esp32/MD5Builder.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/esp_system/include/esp_system.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/esp_common/include/esp_err.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/esp_common/include/esp_compiler.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/esp_common/include/esp_attr.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/esp_common/include/esp_bit_defs.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/esp_common/include/esp_idf_version.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/esp_rom/include/esp_rom_md5.h \
+ /home/dcbmah/.platformio/packages/framework-arduinoespressif32/cores/esp32/HashBuilder.h
