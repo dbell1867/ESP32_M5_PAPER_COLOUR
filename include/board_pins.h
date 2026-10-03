@@ -8,6 +8,9 @@
 constexpr uint8_t PIN_AUDIO_PWR_EN = 45;  // ES8311 codec + ES7210 mic power
 constexpr uint8_t PIN_SPK_EN       = 46;  // AW8737A speaker amplifier enable
 
+// E-paper BUSY: LOW while the panel is working. M5GFX owns it; we only LISTEN.
+constexpr uint8_t PIN_EPD_BUSY = 11;
+
 // microSD — shares the e-paper's SPI2 (FSPI) bus; power comes from the PMIC
 // (M5GFX switches it on during M5.begin()).
 constexpr uint8_t PIN_SPI_SCLK = 15;
