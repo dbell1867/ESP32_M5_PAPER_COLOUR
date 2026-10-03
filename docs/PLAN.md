@@ -9,16 +9,14 @@ open questions are recorded so a future session can pick up cold.
 > Board facts: Lesson 01 "The hardware". Reusable workflow + gotchas: the
 > `esp32-board-bringup` skill.
 >
-> **Current position (2026-10-03):** Lesson 02 **Parts 1–4 done** — init table
-> decoded, refresh measured phase-by-phase (BUSY-edge ISR: 14,413 ms panel refresh,
-> 1,200 ms deliberate waits, 241 ms transfer), frame buffer measured (722,256 B
-> PSRAM, 24-bit), nearest-ink matching (grey → green) and dithering incl. the
-> pair-matching side effect (grey → teal), host simulator `tools/epd_sim.py`.
-> **NEXT: Lesson 02 Part 5** — draw the simulator's test image on the glass in all
-> four `epd_mode`s (A/B to step, one 16 s refresh each) and compare with
-> `sim/compare.png`; write the results into Lesson 02.
+> **Current position (2026-10-03):** **Lesson 02 complete** (Parts 1–5) — driver
+> read, refresh measured phase-by-phase, frame buffer measured, dithering
+> understood, and every simulator prediction **confirmed on the glass**. Mode
+> verdict: fastest for exact-ink UIs, quality for photos (fast for nicest oranges);
+> one mode per refresh. **NEXT: choose Lesson 03** — sensors + RTC (with the
+> cold-refresh experiment) is the suggested default.
 >
-> `src/main.cpp` currently holds the **PSRAM check** (`stages/lesson2_psram_check.cpp`).
+> `src/main.cpp` currently holds the **glass-vs-sim tool** (`stages/lesson2_glass_vs_sim.cpp`).
 
 ---
 
@@ -42,16 +40,13 @@ open questions are recorded so a future session can pick up cold.
 - [x] **Lesson 01** written.
 - [x] **Skill updated** — phase 4 vendor-library question, phase 4b firmware
       backup, gotcha 25(b) "who owns the bus".
-- [x] **Lesson 02 Parts 1–4** — driver reading, BUSY timeline, PSRAM check,
-      palette + packing, dithering, simulator. Written up (Part 5 pending).
+- [x] **Lesson 02** — driver reading, BUSY timeline, PSRAM check, palette +
+      packing, dithering, simulator, and **Part 5: all predictions confirmed on
+      the glass**; dithering costs ~0.6 s CPU (+567 ms fast, +606 ms text/quality).
 
 ## ▶ Next
 
-- [ ] **Lesson 02 Part 5 — verify on the glass.** Port `pixel()` from
-      `tools/epd_sim.py` to C++ (same integer maths); A/B cycle the four modes, C
-      commits; LED 1 red while refreshing. *Done when:* the learner has compared
-      each mode with `sim/compare.png` and the results (incl. whether greys look
-      tinted) are written into Lesson 02.
+- [ ] **Lesson 03 — pick one** (default: sensors + RTC + cold-refresh experiment).
 
 ## Later (candidates, not yet ordered)
 
@@ -63,11 +58,16 @@ open questions are recorded so a future session can pick up cold.
       once, sleep. Measure real current (gotcha 20).
 - [ ] **Battery / PMIC** — what M5PM1 (0x6E) can report.
 - [ ] **Optional exercise** — a minimal 6-colour driver of our own, checked
-      against `Panel_ED2208`.
+      against `Panel_ED2208`; or app-side dithering of a photo region shown in
+      `fastest` (crisp text + dithered image on one screen).
+- [ ] **Untested:** how anti-aliased (smooth) fonts look in each mode.
 - [ ] **Skill restructure** (separate job, needs approval) — workflow + principles
       in `SKILL.md`, topic-specific gotchas into reference files.
 
 ## Decisions (with reasons)
+
+- **EPD mode by content (2026-10-03):** `fastest` for UIs in the six exact inks
+  (crisp, 0.6 s faster); `quality` for photos (`fast` if warm tones matter).
 
 - **Hybrid approach (2026-10-02):** build with M5Unified/M5GFX; learn the low
   level by reading `Panel_ED2208`. The key init bytes are vendor values we'd copy
@@ -85,5 +85,4 @@ open questions are recorded so a future session can pick up cold.
 - Why does the booster command `0x06` use `…0x17` at init but `…0x27` before a
   refresh? (Unexplained in the driver.)
 - What do the "CMDH" bytes (`0xAA 0x49 0x55 …`) and `0x84` do? (Vendor magic.)
-- Does the real panel show greys as tinted as the simulator predicts? (Part 5.)
 - Does cold slow the refresh toward the driver's 20 s timeout? (Sensors stage.)

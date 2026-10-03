@@ -10,8 +10,7 @@ and check every claim we make about it against a **measurement**.
 > M5Unified/M5GFX, **learn** by reading the driver. "Gotcha N" refers to the
 > `esp32-board-bringup` skill's playbook.
 
-> **Status:** Parts 1–4 done. Part 5 (verify on the glass) is in progress — its
-> section below lists the predictions to test.
+> **Status:** complete (Parts 1–5).
 
 ---
 
@@ -453,23 +452,80 @@ photo of the real ink.
 
 ---
 
-## Part 5 — Verify on the glass *(in progress)*
+## Part 5 — Verify on the glass
 
-Draw the same test image on the device; A/B step through the four modes (one
-16 s refresh each); compare with `sim/compare.png`.
+### Method (`stages/lesson2_glass_vs_sim.cpp`)
 
-Predictions to test:
+`pixel()` from the simulator was ported to C++ with the **same integer maths**
+and drawn into the frame buffer **once** (240,000 `drawPixel` calls in one
+`startWrite()`/`endWrite()` batch: **204 ms**). A/B choose a mode, C refreshes.
 
-1. `epd_fastest`: the grey ramp shows **four hard bands** — black, green, blue, white.
-2. `epd_quality`: **smooth** gradients, but **greys with a blue-green tint**.
-3. The real panel may look *less* tinted than the simulation, because real inks
-   needn't match the palette values — the model-vs-reality gap this part measures.
+Two earlier findings made this cheap:
 
-*Results: to be added.*
+- **No redraw per mode.** The frame buffer keeps full RGB (Part 3), so the ink
+  decision is made at `display()` time — `setEpdMode()` then `display()` is enough.
+- **…except that `display()` skips the refresh if nothing was drawn** (Part 1). So
+  each commit redraws a small `epd_mode: …` label at the bottom, which marks the
+  buffer dirty. Without it, a mode change would silently do nothing.
+
+### Predictions vs the glass
+
+| Mode | Prediction (simulator) | Seen on the glass |
+|---|---|---|
+| fastest | six solid inks; grey ramp black → green → narrow blue → white; mid/dark grey green; navy black; orange → yellow | **All confirmed** |
+| fast | smooth-ish ramp with a blue-green tint; cross-hatch texture; dusty orange as yellow + red | **Confirmed**: "kind of smooth with a blue-green tint"; dot pattern "still noticeable for some colours at arm's length"; orange looks orange — *best-looking oranges of the four* |
+| text | diagonal texture; ramp with some yellow (7 %) | **Confirmed, plus a surprise**: diagonal and *more* noticeable; ramp in distinct zones black → greenish → bluish → **yellowish** → white; **blotchier** than fast |
+| quality | smoothest; greys still tinted | **Confirmed**: smoother, slight tint; finer texture but still noticeable; **best match to the source** in the hue × lightness band |
+
+The 7 % yellow the simulator predicted for `text` (and not for fastest/fast) was
+visible on the glass — a small detail of the model, confirmed.
+
+**Why `text` is blotchier than `fast`:** at strength 70 the arithmetic pattern
+nudges only about ±18 shared + ±18 per channel, versus Bayer's ±70. A weaker nudge
+mixes inks over narrower ranges, and between them colours snap to one ink — zones
+and blotches. The likely intent (our reading; the code doesn't say): a weak nudge
+keeps **text and line edges crisp**, without stray dots around glyphs. "text" means
+*tuned for different content*, not *worse*.
+
+### Cost of dithering — measured
+
+| Mode | `display()` | vs fastest |
+|---|---|---|
+| fastest | 16,151 ms | — |
+| fast | 16,718 ms | +567 ms |
+| text | 16,757 ms | +606 ms |
+| quality | 16,757 ms | +606 ms |
+
+Pair matching (36 ink pairs for each of 120,000 pixel pairs) costs ~0.6 s of CPU.
+`text` and `quality` take *identical* time — same function, only the nudge
+strength differs, which costs nothing. Still only ~4 % of a refresh; the panel
+dominates (Part 2).
+
+### Do exact inks survive dithering? (simulator)
+
+Flat areas drawn in the six exact palette colours stay **100 % pure** in every
+mode for black, white, yellow, red and blue; green is 97–100 %, and `quality`
+sprinkles 2 % stray dots into black. So for a UI built from exact inks, the mode
+barely matters — it matters for **in-between** colours: photos, gradients, and the
+anti-aliased edges of smooth fonts (not yet tested on the glass).
+
+### Choosing a mode — what we concluded
+
+- **The mode applies to the whole screen, per refresh.** You can't have `text`
+  for the labels and `quality` for a photo in one refresh.
+- **Dashboard of text + icons in exact inks:** `fastest` — crisp, no stray dots,
+  0.6 s quicker. (If smooth/anti-aliased fonts are used, `text` is the candidate —
+  untested.)
+- **Photo:** `quality` matched the source best; `fast` gave the most pleasing
+  oranges. Taste, and content, decide.
+- **A design idea for mixed screens:** dither the *photo region yourself* (in app
+  code, using only the six exact inks) and refresh the whole screen in `fastest`.
+  Exact inks pass through untouched, so the text stays crisp and the photo keeps
+  your chosen dithering. (This is what writing our own low-level code would buy.)
 
 ---
 
-## What you learned (so far)
+## What you learned
 
 - ✅ Read a vendor driver; separated known / likely / unknown in its init table
 - ✅ Measured a refresh phase by phase with an ISR on a pin you don't own (91 %
@@ -479,6 +535,8 @@ Predictions to test:
 - ✅ Nearest-colour matching and why grey → green
 - ✅ Bayer and arithmetic dithering; pair matching and its grey side effect
 - ✅ Built a host simulator to predict before spending hardware time
+- ✅ Verified every simulator prediction on the glass; found why `text` bands
+- ✅ Measured dithering's CPU cost (~0.6 s) and chose modes by content
 
 ## Files
 
@@ -486,6 +544,7 @@ Predictions to test:
 |---|---|
 | `stages/lesson2_busy_timeline.cpp` | BUSY-edge ISR + on-screen timing report |
 | `stages/lesson2_psram_check.cpp` | heap/PSRAM before vs after `M5.begin()` |
+| `stages/lesson2_glass_vs_sim.cpp` | test image on the glass, A/B/C through the four modes |
 | `tools/epd_sim.py` | host simulator of the four dither paths |
 | `sim/*.png` | simulator output (regenerate any time) |
 
@@ -500,3 +559,10 @@ Predictions to test:
 - **Pair matching** — choosing inks for two pixels together, scoring their average
   and each one individually.
 - **Free vs largest block** — how much memory is free vs the biggest single piece.
+
+## Next lesson
+
+Candidates (see `docs/PLAN.md`): the **SHT40 sensor + RTC**, including the
+cold-refresh experiment (does cold eat the 28 % timeout headroom?); then a
+**deep-sleep dashboard**. Optional exercise from Part 5: dither a photo region
+yourself and refresh in `fastest`.
