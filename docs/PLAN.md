@@ -9,14 +9,14 @@ open questions are recorded so a future session can pick up cold.
 > Board facts: Lesson 01 "The hardware". Reusable workflow + gotchas: the
 > `esp32-board-bringup` skill.
 >
-> **Current position (2026-10-03):** **Lesson 02 complete** (Parts 1–5) — driver
-> read, refresh measured phase-by-phase, frame buffer measured, dithering
-> understood, and every simulator prediction **confirmed on the glass**. Mode
-> verdict: fastest for exact-ink UIs, quality for photos (fast for nicest oranges);
-> one mode per refresh. **NEXT: choose Lesson 03** — sensors + RTC (with the
-> cold-refresh experiment) is the suggested default.
+> **Current position (2026-10-03):** **Lesson 03 Parts 1–3 done** — internal I²C
+> bus surveyed via `M5.In_I2C` (port 1; never `Wire.begin(3,2)`), hand-written SHT40
+> driver (CRC verified, ~23.6 °C / 53 %RH), RTC set to UTC with BST display and an
+> edge-synced system clock (±10 ms vs host). Written up in
+> `docs/lesson-03-sensors-and-rtc.md`. **NEXT: Lesson 03 Part 4** — e-paper
+> dashboard (time, T, RH) + cold-refresh experiment (log T next to BUSY REFRESH ms).
 >
-> `src/main.cpp` currently holds the **glass-vs-sim tool** (`stages/lesson2_glass_vs_sim.cpp`).
+> `src/main.cpp` currently holds the **RTC stage** (`stages/lesson3_rtc.cpp`).
 
 ---
 
@@ -40,22 +40,24 @@ open questions are recorded so a future session can pick up cold.
 - [x] **Lesson 01** written.
 - [x] **Skill updated** — phase 4 vendor-library question, phase 4b firmware
       backup, gotcha 25(b) "who owns the bus".
+- [x] **Lesson 03 Parts 1–3** — I²C survey, SHT40 by hand, RTC (UTC + BST).
 - [x] **Lesson 02** — driver reading, BUSY timeline, PSRAM check, palette +
       packing, dithering, simulator, and **Part 5: all predictions confirmed on
       the glass**; dithering costs ~0.6 s CPU (+567 ms fast, +606 ms text/quality).
 
 ## ▶ Next
 
-- [ ] **Lesson 03 — pick one** (default: sensors + RTC + cold-refresh experiment).
+- [ ] **Lesson 03 Part 4** — dashboard: UK time, temperature, humidity on the
+      e-paper (fastest mode, exact inks), refreshed on a schedule / button; log
+      temperature + BUSY REFRESH duration for the cold-refresh experiment; measure
+      SHT40 self-heating and RTC/system-clock drift over hours.
 
 ## Later (candidates, not yet ordered)
 
-- [ ] **Sensors** — SHT40 temperature/humidity (I²C 0x44); RX8130CE RTC (0x32).
-      Includes the **cold-refresh experiment**: log temperature next to the BUSY
-      REFRESH duration — does cold eat the 28 % timeout headroom?
 - [ ] **Deep-sleep dashboard** — the job this board is built for: wake on RTC
       timer or a button (external pull-ups → no RTC-domain pull-ups needed), draw
-      once, sleep. Measure real current (gotcha 20).
+      once, sleep. Measure real current (gotcha 20). Include the true "board fully
+      off" RTC-retention test (the USB-unplug test only proved "USB lost").
 - [ ] **Battery / PMIC** — what M5PM1 (0x6E) can report.
 - [ ] **Optional exercise** — a minimal 6-colour driver of our own, checked
       against `Panel_ED2208`; or app-side dithering of a photo region shown in
@@ -65,6 +67,11 @@ open questions are recorded so a future session can pick up cold.
       in `SKILL.md`, topic-specific gotchas into reference files.
 
 ## Decisions (with reasons)
+
+- **RTC holds UTC (2026-10-03):** UK time incl. BST computed via POSIX TZ; matches
+  M5Unified's UTC assumption. Re-apply TZ after `setSystemTimeFromRtc()` (its stale
+  `char*` bug) and sync on the RTC's second edge.
+- **SHT40 via our own driver on `M5.In_I2C`** (M5Unified has none).
 
 - **EPD mode by content (2026-10-03):** `fastest` for UIs in the six exact inks
   (crisp, 0.6 s faster); `quality` for photos (`fast` if warm tones matter).
@@ -81,6 +88,10 @@ open questions are recorded so a future session can pick up cold.
 - **Lesson 01 stays one document** (not split per stage).
 
 ## Open questions
+
+- RX8130 flag register `0x1D` reads `0x27` before and after setting — meaning of
+  the bits other than bit 7 (battery-low)?
+- How warm does the SHT40 read vs the room (self-heating)?
 
 - Why does the booster command `0x06` use `…0x17` at init but `…0x27` before a
   refresh? (Unexplained in the driver.)
