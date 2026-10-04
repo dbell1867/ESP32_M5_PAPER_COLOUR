@@ -57,8 +57,8 @@ open questions are recorded so a future session can pick up cold.
 ## Later (candidates, not yet ordered)
 
 - [ ] **RTC "board fully off" retention test** (PMIC power-off, then check the time).
-- [ ] **Skill fix:** gotcha 19 wrongly says the S3 has no EXT0 (`soc_caps.h`:
-      `SOC_PM_SUPPORT_EXT0_WAKEUP (1)`).
+- [x] **Skill fix (2026-10-04):** gotcha 19 corrected — wake modes differ by chip; check
+      `soc_caps.h` (S3 has EXT0 + EXT1).
 - [ ] **Battery / PMIC** — what M5PM1 (0x6E) can report.
 - [ ] **Optional exercise** — a minimal 6-colour driver of our own, checked
       against `Panel_ED2208`; or app-side dithering of a photo region shown in
