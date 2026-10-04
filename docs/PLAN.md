@@ -9,13 +9,14 @@ open questions are recorded so a future session can pick up cold.
 > Board facts: Lesson 01 "The hardware". Reusable workflow + gotchas: the
 > `esp32-board-bringup` skill.
 >
-> **Current position (2026-10-03):** **Lesson 03 complete** — I²C survey, SHT40
-> driver class, RTC (UTC + BST, edge-synced), e-paper dashboard, and the **fridge
-> experiment**: refresh got slightly *faster* when cold (+3.2 ms/°C, 49 ms over
-> 8.4–23.5 °C) — the "cold eats the 20 s timeout" hypothesis is not supported down to
-> 8.4 °C. **NEXT: choose Lesson 04** — the deep-sleep dashboard is the natural step.
+> **Current position (2026-10-04):** **Lesson 04 Parts 1–2 done** — deep-sleep
+> dashboard works (timer every 2 min + EXT1 buttons, RTC memory); power bench found
+> the **Grove 5 V output (on by default, nothing attached) = 24 mA**, and proved a USB
+> meter **can't see the board's own load** while plugged in (runs from battery once
+> charged). `isCharging()` is a stub. **NEXT: Lesson 04 Part 3** — dashboard v2 with
+> every unneeded supply off, and a real way to measure consumption.
 >
-> `src/main.cpp` currently holds the **dashboard** (`stages/lesson3_dashboard.cpp`).
+> `src/main.cpp` currently holds the **power bench v2** (`stages/lesson4_power_bench.cpp`).
 
 ---
 
@@ -39,6 +40,8 @@ open questions are recorded so a future session can pick up cold.
 - [x] **Lesson 01** written.
 - [x] **Skill updated** — phase 4 vendor-library question, phase 4b firmware
       backup, gotcha 25(b) "who owns the bus".
+- [x] **Lesson 04 Parts 1–2** — deep-sleep dashboard; power bench (Grove 5 V = 24 mA;
+      USB meter blind to the board's own load).
 - [x] **Lesson 03** — I²C survey, SHT40 by hand (now `Sht40` class), RTC (UTC + BST),
       dashboard, fridge experiment (`docs/data/fridge-2026-10-03.csv`).
 - [x] **Lesson 02** — driver reading, BUSY timeline, PSRAM check, palette +
@@ -47,15 +50,15 @@ open questions are recorded so a future session can pick up cold.
 
 ## ▶ Next
 
-- [ ] **Lesson 04 — pick one** (suggested: deep-sleep dashboard — wake on RTC timer or
-      button, sample, refresh, sleep; measure real current; RTC "fully off" test).
+- [ ] **Lesson 04 Part 3** — dashboard v2: Grove 5 V off, LED supply off in sleep
+      (SD/panel power off too if harmless); choose a measurement method (battery
+      voltage over days on battery, or meter on a battery-less supply).
 
 ## Later (candidates, not yet ordered)
 
-- [ ] **Deep-sleep dashboard** — the job this board is built for: wake on RTC
-      timer or a button (external pull-ups → no RTC-domain pull-ups needed), draw
-      once, sleep. Measure real current (gotcha 20). Include the true "board fully
-      off" RTC-retention test (the USB-unplug test only proved "USB lost").
+- [ ] **RTC "board fully off" retention test** (PMIC power-off, then check the time).
+- [ ] **Skill fix:** gotcha 19 wrongly says the S3 has no EXT0 (`soc_caps.h`:
+      `SOC_PM_SUPPORT_EXT0_WAKEUP (1)`).
 - [ ] **Battery / PMIC** — what M5PM1 (0x6E) can report.
 - [ ] **Optional exercise** — a minimal 6-colour driver of our own, checked
       against `Panel_ED2208`; or app-side dithering of a photo region shown in
@@ -86,6 +89,9 @@ open questions are recorded so a future session can pick up cold.
 - **Lesson 01 stays one document** (not split per stage).
 
 ## Open questions
+
+- Why does the Grove 5 V boost draw 24 mA with nothing attached? (schematic)
+- What power-path rule does the PMIC use (battery vs USB) while plugged in?
 
 - RX8130 flag register `0x1D` reads `0x27` before and after setting — meaning of
   the bits other than bit 7 (battery-low)?
