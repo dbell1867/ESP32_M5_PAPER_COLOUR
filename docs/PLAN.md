@@ -9,14 +9,14 @@ open questions are recorded so a future session can pick up cold.
 > Board facts: Lesson 01 "The hardware". Reusable workflow + gotchas: the
 > `esp32-board-bringup` skill.
 >
-> **Current position (2026-10-04):** **Lesson 04 Parts 1–2 done** — deep-sleep
-> dashboard works (timer every 2 min + EXT1 buttons, RTC memory); power bench found
-> the **Grove 5 V output (on by default, nothing attached) = 24 mA**, and proved a USB
-> meter **can't see the board's own load** while plugged in (runs from battery once
-> charged). `isCharging()` is a stub. **NEXT: Lesson 04 Part 3** — dashboard v2 with
-> every unneeded supply off, and a real way to measure consumption.
+> **Current position (2026-10-04 09:22):** **Lesson 04 Part 3 running** — dashboard
+> v2 (Grove 5 V, LED supply, SD and panel power off in sleep; hourly battery log)
+> verified: timer wake awake only **217 ms**, panel works after power-cycling, log
+> pull works. **Multi-day on-battery test (option A) started** — to finish: plug in,
+> run `tools/pull_log.py docs/data/battery-<date>.csv`, press a button. Compare from
+> the first hourly entry AFTER unplugging (readings on USB are inflated by charging).
 >
-> `src/main.cpp` currently holds the **power bench v2** (`stages/lesson4_power_bench.cpp`).
+> `src/main.cpp` currently holds **dashboard v2** (`stages/lesson4_deep_sleep_v2.cpp`).
 
 ---
 
