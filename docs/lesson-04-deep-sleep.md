@@ -6,9 +6,10 @@
 what it really costs with an inline USB meter.
 
 > Audience note: Python / CircuitPython background, learning C++.
-> **Status:** Parts 1–2 done (deep-sleep dashboard; power bench). The finding that
-> changes the plan: a USB meter **cannot see this board's own load** while it's
-> plugged in.
+> **Status:** Parts 1–5 done; Part 5's 24 h battery test (L1 standby) running.
+> Story so far: deep sleep (L2) drained **~38 mA average** on battery; every switchable
+> rail was verified off; the vendor schematic showed why, and the fix is the power
+> chip's **L1 standby** (everything off, PMIC timer powers the board back on).
 
 ---
 
@@ -179,7 +180,115 @@ lifts the terminal voltage — gotcha 16) vs **4.18 V** at step 1.
   supply before sleeping — vendor defaults are tuned for "works out of the box", not
   for battery life.*
 
-*(Part 3 — how to measure the real consumption, and the improved dashboard — next.)*
+## Part 3 — Dashboard v2 and the 24-hour battery test (`stages/lesson4_deep_sleep_v2.cpp`)
+
+v2 switched off **Grove 5 V, LED supply, SD power and panel power** before every sleep,
+kept an **hourly battery log** in RTC memory, and opened a **30 s service window** on a
+button wake (plugging USB into a sleeping board doesn't reboot it) where `LOG` dumps
+the logs. `tools/pull_log.py` waits for that window and saves the CSV.
+
+Verified first: a timer wake takes only **217 ms**; the panel survives being powered
+off between wakes; the log pull works.
+
+### Result — far worse than estimated (`docs/data/battery-2026-10-05.csv`)
+
+| | |
+|---|---|
+| Duration on battery | 22.6 h (23 hourly points) |
+| Voltage | 4130 → 3692 mV, a **straight line, −18.8 mV/h** (residual ±22 mV) |
+| Charge used (typical LiPo curve, ±50 %) | ~93 % → ~24 %, **~870 mAh ⇒ ~38 mA average** |
+| Estimate beforehand | refreshes ~1 mA + wakes ~0.1 mA avg ⇒ **~1.4 mA** |
+
+Refreshes (142, on schedule) and wakes (700) explain only ~1–2 mA: **~35 mA flowed
+while "asleep"**. A straight line means a constant load, not an event. (Bonus: hourly
+entries were 61.6 min apart → the 120 s ESP32 sleep timer actually ran **123.3 s**, its
+RC oscillator ~2.7 % slow — the reason to re-read the RTC chip every wake.)
+
+## Part 4 — Read-back check and the schematic
+
+### Read back, don't assume
+
+v2.1 read the power chip's registers **after** switching rails off, just before
+sleeping, and kept them for the next service window:
+
+```
+PWR_CFG 0x13 → LED_EN 1  BOOST_5V 0  LDO_3V3(RGB) 0  DCDC_3V3 1  CHG_EN 1
+GPIO_OUT 0x00 → G0 (e-paper power) 0   G3 (SD power) 0
+```
+
+Every rail we switch **was** off (the suspicion that a write silently failed was wrong).
+`DCDC_3V3 1` = the main 3.3 V converter stays on in deep sleep — by design. `LED_EN`
+goes to a debug test point (`PY_SWD`), not a load. 5V-out read 4.87 V only because USB
+feeds that net through the Grove two-way circuit.
+
+### What the vendor schematic says (`docs/ref/C151-PaperColor-schematic-V0.5.pdf`)
+
+- **The board always runs from its battery:** USB-C → IP2315 *charger* → VBAT; the
+  system rail is VBAT through a 0 Ω link. Nothing moves the load onto USB — that's why
+  the USB meter was blind (G50), now confirmed from the hardware.
+- **Vendor power modes** (page 1, "Power Network"):
+
+| Mode | Powered |
+|---|---|
+| L0 Shipping | nothing |
+| **L1 Standby** | power chip + RTC only — the **92.53 µA "standby"** |
+| **L2 DeepSleep** | + main 3.3 V converter (JW5712): ESP32, SHT40, keys, switches for LEDs/SD/e-paper |
+| L3A / L3B | active |
+
+Our deep-sleep dashboard lived in **L2**. The ~35 mA is on something that stays powered
+there and can't be switched separately; with the meter blind on battery it can't be
+isolated further from USB. L1 removes the whole L2 domain — the fix, and a test: if the
+drain collapses in L1, the load was on the main 3.3 V rail.
+
+### The power chip can switch the board back on (`docs/ref/M5PM1_Datasheet_EN.pdf`)
+
+- `TIM_CNT` 0x38–0x3B (seconds, LSB first), `TIM_CFG` 0x3C = `0x08` ARM | `0b011`
+  "**system power on**", `TIM_KEY` 0x3D = `0xA5`, then `SYS_CMD` 0x0C = `0xA1` (power
+  off) — the exact sequence from M5Stack's own M5PM1 library.
+- `RTC_MEM` 0xA0–0xBF: **32 bytes retained across ESP32 power-off** (not across loss of
+  the PMIC's own power).
+- `WAKE_SRC` 0x05: TIM / VIN (USB plugged) / PWRBTN flags, **write-0-to-clear**. M5Unified
+  doesn't clear it on PaperColor (it does on ToughC5/PaperMono) — read it after `begin()`.
+- From L1 only the **power button**, the RTC interrupt or the PMIC timer wake the board —
+  buttons A/B/C only work from L2 (accepted trade-off).
+
+## Part 5 — L1 standby dashboard (`stages/lesson4_standby_l1.cpp`)
+
+Every power-on: read sensor + RTC → maybe refresh → save state → arm PMIC timer
+(120 s, "power on") → PMIC power-off. The ESP32 is completely off in between, so:
+
+- **State** (wakes, refreshes, last refresh/battery-log times, shown/min/max °C, last
+  awake ms) is a 30-byte packed struct in the PMIC's `RTC_MEM`;
+  `static_assert(sizeof(State) <= 32)` makes the compiler enforce the limit.
+- **Battery log** goes to **NVS flash** (`Preferences`), hourly — 24 writes/day.
+- **Why are we running?** `esp_reset_reason()`: `ESP_RST_POWERON` (1) = the PMIC
+  switched us on; `ESP_RST_USB` (11) = reset after flashing → fresh state + 20 s flash
+  window. Then `WAKE_SRC`: TIM = routine; PWRBTN/VIN = refresh + 30 s service window.
+- If the power-off doesn't happen, fall back to ESP32 deep sleep.
+
+> **C++ for Pythonistas:** `struct __attribute__((packed))` removes the padding the
+> compiler would normally insert between fields (like `struct.pack('<HII...')` vs a
+> padded C struct) so the bytes fit the 32-byte RAM exactly. `static_assert` is a check
+> done at *compile* time — the build fails if the struct grows too big.
+
+### First run
+
+```
+09:29:54 wake #1 (fresh, WAKE_SRC 0x02, reset 11): T 20.27 batt 3.99 V refreshed   ← after flashing
+09:30:14 power-off for 120 s ... E BOD: Brownout detector was triggered
+09:32:31 wake #2 (timer, WAKE_SRC 0x01, reset 1): T 20.89 ... refreshed (T moved 0.62 °C)
+kernel:  09:34:31 connect → 09:34:32 disconnect                                     ← 1 s routine wake
+```
+
+- The PMIC really powers the board **off** and back **on** — and its timer is exact:
+  power-off 09:30:14 → power-on 09:32:14 (**120 s**, vs the ESP32 RC timer's 123.3 s).
+- State survived the power-off (wake #2) via `RTC_MEM`.
+- The **brownout message** is the ESP32 noticing its supply collapse as the PMIC cuts
+  it — expected for a deliberate power-off, harmless here.
+- A routine wake (no refresh) is ~1 s from USB connect to disconnect: a full boot costs
+  more than a 217 ms deep-sleep wake, still small next to a 16 s refresh.
+
+*(The 24 h battery comparison — next.)*
 
 ---
 
@@ -190,6 +299,9 @@ lifts the terminal voltage — gotcha 16) vs **4.18 V** at step 1.
 | `stages/lesson4_deep_sleep.cpp` | deep-sleep dashboard (timer + EXT1 wake, RTC memory) |
 | `stages/lesson4_power_bench.cpp` | power bench v2 (awake/Grove-off step, no fake charging line) |
 | `tools/follow_serial.py` | follow serial output across deep sleeps |
+| `stages/lesson4_deep_sleep_v2.cpp` | v2.1: rails off + register read-back |
+| `stages/lesson4_standby_l1.cpp` | L1 standby: PMIC timer power-on, state in PMIC RTC_MEM |
+| `tools/pull_log.py` | pull logs during a service window |
 
 ## Glossary
 

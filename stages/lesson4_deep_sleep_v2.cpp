@@ -1,4 +1,4 @@
-// Lesson 04, Part 3 — Deep-sleep dashboard v2: every unneeded supply OFF.
+// Lesson 04, Part 3/4 — Deep-sleep dashboard v2.1: supplies OFF + read-back check.
 //
 //  Every wake (timer every 2 min, or any button):
 //    read SHT40 + RTC -> decide -> maybe refresh -> supplies off -> deep sleep.
@@ -48,7 +48,28 @@ RTC_DATA_ATTR static RefreshEntry refreshLog[REFRESH_LOG];
 RTC_DATA_ATTR static BattEntry    battLog[BATT_LOG];
 RTC_DATA_ATTR static int refreshCount, battCount;
 
+// Read-back check (Part 4): the power chip's registers as they REALLY were just
+// before the last deep sleep — not what we asked for, what the chip reports.
+struct SleepSnap { uint8_t pwrSrc, pwrCfg, holdCfg, i2cCfg, gpioMode, gpioOut, gpioDrv;
+                   uint16_t vout5_mV, batt_mV; bool valid; };
+RTC_DATA_ATTR static SleepSnap snap;
+
 static float curT = NAN, curRH = NAN;
+
+static void printSnap() {
+  if (!snap.valid) { Serial.println("# no sleep snapshot yet"); return; }
+  Serial.println("# power chip registers just before the last sleep (read back)");
+  Serial.printf("PWR_SRC 0x%02X  PWR_CFG 0x%02X  HOLD_CFG 0x%02X  I2C_CFG 0x%02X\n",
+                snap.pwrSrc, snap.pwrCfg, snap.holdCfg, snap.i2cCfg);
+  Serial.printf("  PWR_CFG bits: LED_EN %d  BOOST_5V %d  LDO_3V3(RGB) %d  DCDC_3V3 %d  CHG_EN %d\n",
+                (snap.pwrCfg >> 4) & 1, (snap.pwrCfg >> 3) & 1, (snap.pwrCfg >> 2) & 1,
+                (snap.pwrCfg >> 1) & 1, snap.pwrCfg & 1);
+  Serial.printf("GPIO_MODE 0x%02X  GPIO_OUT 0x%02X  GPIO_DRV 0x%02X  (G0=EPD G3=SD)\n",
+                snap.gpioMode, snap.gpioOut, snap.gpioDrv);
+  Serial.printf("  G0 (EPD power) out %d   G3 (SD power) out %d\n",
+                snap.gpioOut & 1, (snap.gpioOut >> 3) & 1);
+  Serial.printf("5V-out measured %u mV   battery %u mV\n", snap.vout5_mV, snap.batt_mV);
+}
 
 static void drawScreen(float battV) {
   const int W = M5.Display.width();
@@ -132,6 +153,7 @@ static void dumpLogs() {
     Serial.printf("%d,%ld,%s,%.2f,%.1f,%u,%c\n", i + 1, (long)e.t, loc, e.tempC,
                   e.rh, e.batt_mV, e.why);
   }
+  printSnap();
   Serial.printf("# wakes %lu, refreshes %lu, last wake awake %u ms\n",
                 (unsigned long)wakes, (unsigned long)refreshes, lastAwakeMs);
 }
@@ -167,6 +189,10 @@ static void serialWindow(uint32_t ms) {
   pm.setLDOOutput(false);                            // RGB LED supply
   pm.setGPIOOutput(m5::M5PM1_Class::gpio3, false);   // SD card power
   pm.setGPIOOutput(m5::M5PM1_Class::gpio0, false);   // e-paper power (image stays)
+  delay(20);                                         // let rails settle before measuring
+  snap = { pm.readRegister8(0x04), pm.readRegister8(0x06), pm.readRegister8(0x07),
+           pm.readRegister8(0x09), pm.readRegister8(0x10), pm.readRegister8(0x11),
+           pm.readRegister8(0x13), pm.get5VoutVoltage(), pm.getBatteryVoltage(), true };
 
   gpio_hold_en((gpio_num_t)PIN_AUDIO_PWR_EN);
   gpio_hold_en((gpio_num_t)PIN_SPK_EN);
