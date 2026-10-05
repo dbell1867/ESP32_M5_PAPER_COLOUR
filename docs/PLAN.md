@@ -64,8 +64,11 @@ open questions are recorded so a future session can pick up cold.
       against `Panel_ED2208`; or app-side dithering of a photo region shown in
       `fastest` (crisp text + dithered image on one screen).
 - [ ] **Untested:** how anti-aliased (smooth) fonts look in each mode.
-- [ ] **Skill restructure** (separate job, needs approval) — workflow + principles
-      in `SKILL.md`, topic-specific gotchas into reference files.
+- [x] **Skill restructure (2026-10-05)** — `SKILL.md` 9,079 → 1,779 words (workflow +
+      principles + index); 13 topic files in `references/` hold G1–G54 (stable
+      numbers; G42–G54 new from this project); `scripts/follow_serial.py`. Verified by a
+      content-conservation check (606 tokens, 0 missing). Old version backed up in
+      `~/Work/Micro/skill-backups/esp32-board-bringup-2026-10-05/`.
 
 ## Decisions (with reasons)
 
