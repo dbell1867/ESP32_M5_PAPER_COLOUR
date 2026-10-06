@@ -125,3 +125,15 @@ esptool --chip esp32s3 --port /dev/ttyACM0 write-flash 0 backup/papercolor-facto
 
 Active learning project. Current work: a 24-hour test of the standby firmware with
 verified timer arming (see `docs/PLAN.md`).
+
+## License
+
+The code, tools and lesson docs in this repository are released under the
+[MIT License](LICENSE).
+
+Not covered by it — these belong to their owners and are included for reference only:
+
+- `docs/ref/` — M5Stack's PaperColor schematic and M5PM1 datasheet (© M5Stack)
+- `backup/` — a dump of M5Stack's factory firmware for this unit (© M5Stack)
+- third-party libraries fetched by PlatformIO (M5Unified, M5GFX, the Arduino core),
+  which keep their own licenses
