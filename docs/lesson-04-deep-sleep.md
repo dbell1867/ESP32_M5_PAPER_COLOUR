@@ -288,7 +288,41 @@ kernel:  09:34:31 connect → 09:34:32 disconnect                               
 - A routine wake (no refresh) is ~1 s from USB connect to disconnect: a full boot costs
   more than a 217 ms deep-sleep wake, still small next to a 16 s refresh.
 
-*(The 24 h battery comparison — next.)*
+### 24 h result (`docs/data/battery-L1-2026-10-06.csv`)
+
+| | L2 deep sleep | **L1 standby** |
+|---|---|---|
+| Voltage slope | −18.8 mV/h | **−1.89 mV/h** (17 points, ±3.7 mV) |
+| Average current (rough, typical LiPo curve) | ~38 mA | **~4 mA** |
+| Battery life (rough) | ~1 day | **~2 weeks** |
+
+**~10× less drain** — the A/B test answered the Part 4 question: the ~35 mA lived on
+the main 3.3 V rail, which L1 switches off.
+
+**But the board stopped waking at ~03:00** — no hourly entries for **8.7 h**, until the
+USB plug-in woke it. The display froze on its last image and the battery barely moved:
+exactly what was seen. ~520 wakes had worked; on one, the PMIC powered off **without a
+timer armed**. v1 ignored every PMIC write's return value — **gotcha 29 in my own
+code**: a write that isn't read back isn't known to have happened.
+
+## Part 6 — Standby v2: never power off without a verified timer (`stages/lesson4_standby_l1_v2.cpp`)
+
+- `armTimer()` writes `TIM_CNT`/`TIM_CFG`/`TIM_KEY`, then **reads `TIM_CNT` and
+  `TIM_CFG` back** (count within 3 s of the request — it may already be ticking — and
+  `ARM | power-on` set). Up to 3 attempts.
+- **Only a verified timer allows the PMIC power-off.** Otherwise: stop the timer and
+  ESP32 deep-sleep for this cycle (more power once, never a dead board).
+- Diagnostics in the 32-byte state (`armRetries`, `fallbacks`, now exactly 32 bytes —
+  `static_assert` still holds) plus a power-off-failure count in NVS; `LOG` reports them,
+  and the screen shows `arm rN fN`.
+- **Second bug, found while planning the fallback:** a deep-sleep wake has reset reason
+  `ESP_RST_DEEPSLEEP`, which v1 treated as a dev boot — wiping state *and* the battery
+  log. Now `POWERON` or `DEEPSLEEP` continue the run.
+
+First run: `power-off for 120 s (... timer verified)` — the PMIC does return the count
+it was given, so read-back is a valid check. Wakes continued every ~2 min.
+
+*(24 h test of v2 — next: are there retries/fallbacks, and does it keep waking?)*
 
 ---
 

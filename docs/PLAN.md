@@ -9,14 +9,14 @@ open questions are recorded so a future session can pick up cold.
 > Board facts: Lesson 01 "The hardware". Reusable workflow + gotchas: the
 > `esp32-board-bringup` skill.
 >
-> **Current position (2026-10-05 09:40):** **Lesson 04 Part 5 running** — the deep-sleep
-> (L2) dashboard drained **~38 mA avg** (−18.8 mV/h); read-back proved all switchable
-> rails off; schematic: board always runs from battery, L2 keeps the main 3.3 V on.
-> Now **L1 standby**: PMIC powers everything off, its timer powers on every 120 s
-> (verified). **NEXT: 24 h on battery**, then power button (or plug in) → service
-> window → `tools/pull_log.py docs/data/battery-L1-<date>.csv`; compare slope.
+> **Current position (2026-10-06 11:50):** L1 standby cut drain ~10× (−1.89 vs
+> −18.8 mV/h, ~4 mA vs ~38 mA) but v1 **stopped waking after ~520 wakes** (timer not
+> armed; PMIC writes unchecked). **v2 verifies the timer by read-back** before power-off,
+> falls back to deep sleep otherwise, counts retries/fallbacks. **NEXT: 24 h test of
+> v2** → power button → `tools/pull_log.py docs/data/battery-L1v2-<date>.csv`; check
+> `arm retries / fallbacks / power-off failures` lines and continuous hourly entries.
 >
-> `src/main.cpp` currently holds the **L1 standby dashboard** (`stages/lesson4_standby_l1.cpp`). Wake it with the POWER button (A/B/C don't work in L1).
+> `src/main.cpp` currently holds the **L1 standby dashboard v2** (`stages/lesson4_standby_l1_v2.cpp`). Wake it with the POWER button (A/B/C don't work in L1).
 
 ---
 
