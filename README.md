@@ -23,8 +23,8 @@ An e-paper **room dashboard** that runs for weeks on the internal battery:
 - press the **power button** (or plug in USB) for an immediate refresh and a 30 s
   window to download the battery log over serial
 
-Measured on battery (rough, from voltage slope): ~**4 mA** average in standby mode vs
-~38 mA with ordinary ESP32 deep sleep — about 10× less (see Lesson 04).
+Measured on battery (rough, from voltage slope): ~**3 mA** average in standby mode vs
+~38 mA with ordinary ESP32 deep sleep — roughly 2–3 weeks per charge (see Lesson 04).
 
 ## Hardware
 
@@ -123,8 +123,8 @@ esptool --chip esp32s3 --port /dev/ttyACM0 write-flash 0 backup/papercolor-facto
 
 ## Status
 
-Active learning project. Current work: a 24-hour test of the standby firmware with
-verified timer arming (see `docs/PLAN.md`).
+Active learning project. Lessons 01–04 complete; the standby dashboard ran a 24 h
+battery test with no missed wakes (see `docs/PLAN.md` for what's next).
 
 ## License
 

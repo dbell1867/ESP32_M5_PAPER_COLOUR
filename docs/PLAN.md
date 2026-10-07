@@ -9,12 +9,11 @@ open questions are recorded so a future session can pick up cold.
 > Board facts: Lesson 01 "The hardware". Reusable workflow + gotchas: the
 > `esp32-board-bringup` skill.
 >
-> **Current position (2026-10-06 11:50):** L1 standby cut drain ~10× (−1.89 vs
-> −18.8 mV/h, ~4 mA vs ~38 mA) but v1 **stopped waking after ~520 wakes** (timer not
-> armed; PMIC writes unchecked). **v2 verifies the timer by read-back** before power-off,
-> falls back to deep sleep otherwise, counts retries/fallbacks. **NEXT: 24 h test of
-> v2** → power button → `tools/pull_log.py docs/data/battery-L1v2-<date>.csv`; check
-> `arm retries / fallbacks / power-off failures` lines and continuous hourly entries.
+> **Current position (2026-10-07):** **Lesson 04 complete.** L1 standby v2 ran 24 h:
+> 662 wakes, no gaps, 0 arm retries / 0 fallbacks / 0 power-off failures, −1.55 mV/h
+> (~3 mA avg, ~2–3 weeks per charge, rough). v1's stall cause stays unproven (could be
+> rare); v2's verified arming + fallback guard against it. **NEXT: choose Lesson 05**
+> (ideas below).
 >
 > `src/main.cpp` currently holds the **L1 standby dashboard v2** (`stages/lesson4_standby_l1_v2.cpp`). Wake it with the POWER button (A/B/C don't work in L1).
 
@@ -40,6 +39,8 @@ open questions are recorded so a future session can pick up cold.
 - [x] **Lesson 01** written.
 - [x] **Skill updated** — phase 4 vendor-library question, phase 4b firmware
       backup, gotcha 25(b) "who owns the bus".
+- [x] **Lesson 04** — deep sleep → power bench → 24 h tests → schematic → L1 standby
+      v2 (verified timer arming): ~38 mA → ~3 mA average.
 - [x] **Lesson 04 Parts 1–2** — deep-sleep dashboard; power bench (Grove 5 V = 24 mA;
       USB meter blind to the board's own load).
 - [x] **Lesson 03** — I²C survey, SHT40 by hand (now `Sht40` class), RTC (UTC + BST),
@@ -50,9 +51,10 @@ open questions are recorded so a future session can pick up cold.
 
 ## ▶ Next
 
-- [ ] **Lesson 04 Part 3** — dashboard v2: Grove 5 V off, LED supply off in sleep
-      (SD/panel power off too if harmless); choose a measurement method (battery
-      voltage over days on battery, or meter on a battery-less supply).
+- [ ] **Lesson 05 — pick one:** stretch battery life (refresh every 30 min / wake every
+      5 min, measure); RTC-interrupt backup wake; Wi-Fi (NTP time sync, or show weather);
+      a photo/image on the colour panel with your own dithering; the minimal own
+      e-paper driver exercise.
 
 ## Later (candidates, not yet ordered)
 

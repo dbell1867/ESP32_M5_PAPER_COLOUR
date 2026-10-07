@@ -6,7 +6,7 @@
 what it really costs with an inline USB meter.
 
 > Audience note: Python / CircuitPython background, learning C++.
-> **Status:** Parts 1–5 done; Part 5's 24 h battery test (L1 standby) running.
+> **Status:** complete (Parts 1–6).
 > Story so far: deep sleep (L2) drained **~38 mA average** on battery; every switchable
 > rail was verified off; the vendor schematic showed why, and the fix is the power
 > chip's **L1 standby** (everything off, PMIC timer powers the board back on).
@@ -322,7 +322,40 @@ code**: a write that isn't read back isn't known to have happened.
 First run: `power-off for 120 s (... timer verified)` — the PMIC does return the count
 it was given, so read-back is a valid check. Wakes continued every ~2 min.
 
-*(24 h test of v2 — next: are there retries/fallbacks, and does it keep waking?)*
+### 24 h result of v2 (`docs/data/battery-L1v2-2026-10-07.csv`)
+
+```
+# wakes 662, refreshes 136
+# timer arm retries 0, fallbacks to deep sleep 0, power-off failures 0
+```
+
+| | L2 deep sleep | L1 v1 | **L1 v2** |
+|---|---|---|---|
+| Slope | −18.8 mV/h | −1.89 mV/h | **−1.55 mV/h** (22 pts, ±3.7 mV) |
+| Average current (rough) | ~38 mA | ~4 mA | **~3 mA** |
+| Kept waking? | yes | **stopped after ~520** | **yes — 662 wakes, max gap 63 min** |
+
+**Honest reading of "0 retries, 0 fallbacks":** v2 ran longer than v1 did before it
+stalled, and no PMIC write failed. That *doesn't* prove failed writes caused v1's stall:
+if they happen about once in 520 wakes, seeing none in 662 is still quite likely
+(roughly 1 chance in 4 — a Poisson estimate). So the cause stays **unproven**; what is
+proven is that the safety net works and costs nothing when unused. If the stall ever
+recurs, the counters will say whether arming failed; if it recurs with zero counts,
+the next suspect is the power-off itself (or the PMIC losing the timer) and the RTC-
+interrupt backup wake.
+
+**Instrument bug, again mine:** `tools/pull_log.py` stopped reading at the `# wakes`
+line — and the arm counters were printed on the line *after* it, so the first pull
+silently dropped the very number the test was for. Fixed: it now reads until 2 s of
+silence. (Gotcha 29 one more time: check your tool can show you the answer.)
+
+### Where Lesson 04 ends up
+
+- ~**3 mA** average ⇒ roughly **2–3 weeks per charge** (from a typical LiPo curve,
+  ±50 %), vs ~1 day with ordinary deep sleep.
+- What's left in the budget is mostly the **refreshes** (136/day × ~16 s) and the full
+  boot on every wake — the next levers if longer life is wanted: refresh every 30 min
+  instead of 10, or wake every 5 min instead of 2.
 
 ---
 

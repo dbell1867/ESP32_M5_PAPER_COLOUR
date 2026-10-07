@@ -28,6 +28,14 @@ while time.time() < deadline:
                 elif sent:
                     lines.append(l)
                     if l.startswith("# wakes"):
+                        # The dump may have trailer lines after "# wakes" (e.g. the
+                        # timer-arm diagnostics) — keep reading until 2 s of silence.
+                        quiet = time.time() + 2
+                        while time.time() < quiet:
+                            more = s.readline().decode(errors="replace").rstrip()
+                            if more:
+                                print(more, flush=True); lines.append(more)
+                                quiet = time.time() + 2
                         open(out, "w").write("\n".join(lines) + "\n")
                         print(f"saved {len(lines)} lines to {out}")
                         sys.exit(0)
