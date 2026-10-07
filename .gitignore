@@ -7,3 +7,6 @@ compile_commands.json
 sim/
 __pycache__/
 # NOTE: backup/ is tracked on purpose — the off-machine copy of the factory firmware.
+
+# Personal photos and their converted data — never committed
+images/
