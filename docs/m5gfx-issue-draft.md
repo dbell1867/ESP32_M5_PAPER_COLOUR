@@ -23,8 +23,10 @@ refreshing.
 
 - REFRESH time is independent of content: all-white, all-black and six solid ink bands
   all measure 26,689–26,691 ms.
-- It persists across firmware (including code that measured 14.4 s earlier), with or without
-  a microSD card, after full power-off cycles, at ~23 °C (earlier ~23.6 °C).
+- It is **intermittent**: since 7 Oct the REFRESH busy time switches between ~14.4 s and
+  ~26.7 s under unchanged code (including code that measured 14.4 s earlier), with or
+  without a microSD card, at ~23 °C; the factory firmware measured ~15–16 s (stopwatch) at
+  one point. We are logging context per refresh to find the trigger.
 - With a microSD card inserted, the 120 KB transfer slows from 241 ms to 639 ms and the BUSY
   pin shows glitch edges.
 

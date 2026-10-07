@@ -6,7 +6,7 @@
 
 > Audience note: Python / CircuitPython background, learning C++.
 > **Status:** complete (Parts 1–4), with one **open question**: why this panel's refresh
-> doubled from 14.4 s to 26.7 s on 7 October (Part 3).
+> switches between ~14.4 s and ~26.7 s (intermittent since 7 October — Part 3).
 >
 > **Privacy:** the photos are personal. They, their previews and the converted panel
 > images live in `images/`, which is **git-ignored**; only the tools and this text are
@@ -176,9 +176,10 @@ Every photo refresh took ~28 s. Lesson 02 had measured ~16 s. Lesson 02's BUSY-p
 
 What it establishes:
 
-1. **The panel's own refresh doubled — 14.4 s → 26.7 s — at about 13:56 on 7 October**,
-   and it persists: across firmware (even the original Lesson 02 program), with or
-   without the card, regardless of the previous image, and after a complete refresh.
+1. **The panel's own refresh doubled — 14.4 s → 26.7 s — from about 13:56 on 7 October**,
+   and stayed slow for hours: across firmware (even the original Lesson 02 program), with
+   or without the card, regardless of the previous image, and after a complete refresh.
+   (Later the same day it came and went — see the update below.)
 2. **Content doesn't matter:** white, black and six ink bands are identical to ±2 ms.
    This panel runs one fixed sequence per refresh (and colour count was not what
    changed — Lesson 02's six-ink test image took 14.4 s too).
@@ -202,6 +203,32 @@ with the card in under the new firmware) — speculation, not evidence. M5Stack 
 > **Method note (gotcha 22):** after three plausible hypotheses failed, the useful moves
 > were controlled comparisons — same program, same screen, then vs now; card in vs out;
 > colour vs none — each designed so the result *could* come out differently.
+
+### Update — it is intermittent, not persistent (later on 7 Oct)
+
+| Time | REFRESH | Situation |
+|---|---|---|
+| until 13:52 | ~14.4 s | dashboard, scheduled refreshes |
+| 13:56 – 15:32 | ~26.7 s | photo firmware, test programs, restored dashboard |
+| ~16:18 | "15–16 s" by stopwatch | **factory firmware** (flashed from the backup; NVS saved and restored around it) |
+| 16:24 | 14.5 s | our dashboard, first boot straight after the factory firmware |
+| ~16:30 | 26.7 s | our dashboard after an upload |
+| 16:31 | 14.2 s ×3 | first boot after an upload, then two REDRAWs |
+| 16:38 | 26.7 s ×2 | first boot after an upload, then a REDRAW |
+
+- The factory firmware "fixing" it was most likely **coincidence**: the slow state comes
+  and goes under our own, unchanged firmware.
+- **Falsified:** the factory firmware drives PM1 GPIO4 (`SD_DET_EN`) as a push-pull output
+  HIGH; ours leaves it an input (and with `HOLD_CFG = 0` every standby power-off resets
+  PM1 GPIOs). But the panel was fast with GPIO4 still an input, and setting it HIGH changed
+  nothing (`SDDET 1`). The slow-state power-chip registers are in
+  `docs/data/pmic-regs-slow-2026-10-07.txt` (`PMDUMP`).
+- Side finding: the board's real **card-detect** is **PM1 GPIO1** (`SD_DEC`, read by the
+  factory firmware via the power chip) — which is why ESP32 G1 never saw the card.
+- Next: **collect data, not hypotheses** (gotcha 22). Every refresh is now logged with
+  context — REFRESH and transfer time, battery mV, temperature, minutes since the previous
+  refresh, PMIC wake source, USB present, kind — in NVS (`RLOG`, last 192 refreshes), and
+  the hourly battery log has a `refresh_ms` column. To be analysed after a day of normal use.
 
 ## Part 4 — What was changed because of it
 
