@@ -96,6 +96,8 @@ static void IRAM_ATTR onBusyEdge() {
   }
 }
 
+static uint16_t g_lastRefreshMs = 0;   // panel REFRESH phase of the latest refresh
+
 static void timedDisplay(const char* what) {
   nEdges = 0;
   uint32_t t0 = micros();
@@ -114,6 +116,8 @@ static void timedDisplay(const char* what) {
       low = false;
     }
   }
+  uint32_t longest = max(max(phase[0], phase[1]), phase[2]);   // = REFRESH normally
+  g_lastRefreshMs = (uint16_t)min<uint32_t>(longest, 65535);
   Serial.printf("refresh timing [%s]: total %lu ms, transfer %lu ms, busy phases %lu / %lu / %lu ms "
                 "(power-on / REFRESH / power-off)\n", what, (unsigned long)((t1 - t0) / 1000),
                 (unsigned long)(transfer / 1000), (unsigned long)phase[0],
@@ -136,7 +140,7 @@ static constexpr uint16_t MAGIC = 0x4C31;  // "L1"
 static State st;
 
 // ---- hourly battery log in NVS flash ----
-struct BattEntry { uint32_t t; uint16_t batt_mV; int16_t temp_cC; };
+struct BattEntry { uint32_t t; uint16_t batt_mV; int16_t temp_cC; uint16_t refreshMs; };
 static constexpr int BATT_LOG = 120;
 static Preferences prefs;
 
@@ -261,7 +265,9 @@ static void drawEmptyScreen(float battV) {
 }
 
 static void battLogAppend(uint32_t t, uint16_t mV, int16_t cC) {
-  BattEntry e = { t, mV, cC };
+  // refreshMs: the panel's REFRESH time at the most recent refresh — so a change
+  // like 14.4 s -> 26.7 s (Lesson 06) shows up in the log with its date.
+  BattEntry e = { t, mV, cC, prefs.isKey("lastref") ? prefs.getUShort("lastref") : (uint16_t)0 };
   uint32_t n = prefs.getUInt("n", 0);
   char key[8];
   snprintf(key, sizeof key, "b%u", (unsigned)(n % BATT_LOG));
@@ -274,7 +280,7 @@ static void dumpSyncLog();   // defined further down; declared here so LOG can c
 static void dumpLog() {
   uint32_t n = prefs.getUInt("n", 0), kept = min<uint32_t>(n, BATT_LOG);
   Serial.println("# battery log (hourly, NVS)");
-  Serial.println("n,utc_epoch,local,batt_mV,temp_c");
+  Serial.println("n,utc_epoch,local,batt_mV,temp_c,refresh_ms");
   for (uint32_t i = n - kept; i < n; ++i) {
     char key[8];
     snprintf(key, sizeof key, "b%u", (unsigned)(i % BATT_LOG));
@@ -283,8 +289,8 @@ static void dumpLog() {
     time_t t = e.t;
     struct tm lt;  localtime_r(&t, &lt);
     char loc[24];  strftime(loc, sizeof loc, "%Y-%m-%d %H:%M:%S", &lt);
-    Serial.printf("%lu,%lu,%s,%u,%.2f\n", (unsigned long)i + 1, (unsigned long)e.t, loc,
-                  e.batt_mV, e.temp_cC / 100.0f);
+    Serial.printf("%lu,%lu,%s,%u,%.2f,%u\n", (unsigned long)i + 1, (unsigned long)e.t, loc,
+                  e.batt_mV, e.temp_cC / 100.0f, e.refreshMs);
   }
   Serial.printf("# wakes %lu, refreshes %lu, last wake awake %u ms\n",
                 (unsigned long)st.wakes, (unsigned long)st.refreshes, st.lastAwakeMs);
@@ -533,12 +539,31 @@ static bool showPhoto(const String& name, bool routeA) {
   uint32_t t1 = millis();
   M5.Led.setColor(1, 255, 0, 0);  M5.Led.display();
   timedDisplay(routeA ? "photo A" : "photo B");
+  if (g_lastRefreshMs) prefs.putUShort("lastref", g_lastRefreshMs);
   M5.Led.setAllColor(0, 0, 0);    M5.Led.display();
   M5.Display.setEpdMode(epd_mode_t::epd_fastest);   // dashboard default
   Serial.printf("photo: %s shown via route %c (load %lu ms, refresh %lu ms)\n", path.c_str(),
                 routeA ? 'A' : 'B', (unsigned long)(t1 - t0), (unsigned long)(millis() - t1));
   prefs.putUChar("hold", 1);           // photo-frame mode until the power button
   return true;
+}
+
+// Every documented M5PM1 register, read-only (Lesson 06: the panel's refresh doubled and
+// running the factory firmware fixed it — the power chip is the only part that keeps its
+// state across everything, so record it in the "fast" state and diff if it ever recurs).
+static void pmDump() {
+  static const uint8_t ranges[][2] = { {0x00,0x0C}, {0x10,0x19}, {0x20,0x2A}, {0x30,0x35},
+                                       {0x38,0x3D}, {0x40,0x45}, {0x48,0x4A}, {0x50,0x50},
+                                       {0x53,0x53}, {0xA0,0xBF} };
+  Serial.println("# M5PM1 register dump (reg=value)");
+  for (auto& r : ranges) {
+    for (int reg = r[0]; reg <= r[1]; ++reg) {
+      uint8_t v = 0;
+      bool ok = pmRead((uint8_t)reg, &v, 1);
+      Serial.printf("%02X=%s%02X%s", reg, ok ? "" : "??", v, (reg == r[1] || (reg & 7) == 7) ? "\n" : " ");
+    }
+  }
+  Serial.println("# end PMDUMP");
 }
 
 static void serialWindow(uint32_t ms) {
@@ -558,6 +583,7 @@ static void serialWindow(uint32_t ms) {
         else if (line == "SYNC") ntpSync();
         else if (line == "SYNCLOG") dumpSyncLog();
         else if (line == "PHOTOS") listPhotos();
+        else if (line == "PMDUMP") pmDump();
         else if (line.startsWith("SHOW ")) {                  // SHOW <name> [A]
           String arg = line.substring(5);
           arg.trim();
@@ -827,6 +853,7 @@ void setup() {
     drawScreen(battV, lowBatt);
     M5.Led.setColor(1, 255, 0, 0);  M5.Led.display();
     timedDisplay("dashboard");
+    if (g_lastRefreshMs) prefs.putUShort("lastref", g_lastRefreshMs);
     M5.Led.setAllColor(0, 0, 0);    M5.Led.display();
     ++st.refreshes;
     st.shownT_cC = cC;

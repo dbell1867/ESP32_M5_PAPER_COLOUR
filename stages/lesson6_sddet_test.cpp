@@ -45,7 +45,6 @@
 #include "esp_sntp.h"
 #include <time.h>
 #include <sys/time.h>
-#include "nvs.h"            // nvs_get_stats (refresh-log space check)
 #include "soc/gpio_reg.h"   // GPIO_IN_REG for the ISR-safe BUSY read
 #include "board_pins.h"
 #include "Sht40.h"
@@ -98,8 +97,6 @@ static void IRAM_ATTR onBusyEdge() {
 }
 
 static uint16_t g_lastRefreshMs = 0;   // panel REFRESH phase of the latest refresh
-static uint16_t g_lastTransferMs = 0;  // SPI transfer before BUSY first went LOW
-static uint8_t  g_wakeSrc = 0;         // PMIC WAKE_SRC of this boot (for the refresh log)
 
 static void timedDisplay(const char* what) {
   nEdges = 0;
@@ -121,7 +118,6 @@ static void timedDisplay(const char* what) {
   }
   uint32_t longest = max(max(phase[0], phase[1]), phase[2]);   // = REFRESH normally
   g_lastRefreshMs = (uint16_t)min<uint32_t>(longest, 65535);
-  g_lastTransferMs = (uint16_t)min<uint32_t>(transfer / 1000, 65535);
   Serial.printf("refresh timing [%s]: total %lu ms, transfer %lu ms, busy phases %lu / %lu / %lu ms "
                 "(power-on / REFRESH / power-off)\n", what, (unsigned long)((t1 - t0) / 1000),
                 (unsigned long)(transfer / 1000), (unsigned long)phase[0],
@@ -266,84 +262,6 @@ static void drawEmptyScreen(float battV) {
   M5.Display.drawString(buf, W / 2, H - 70);
   snprintf(buf, sizeof buf, "battery %.2f V (shutdown below %.2f V)", battV, EMPTY_V);
   M5.Display.drawString(buf, W / 2, H - 45);
-}
-
-// ---- refresh log (Lesson 06): context for every refresh, to find what makes the
-// panel's REFRESH switch between ~14.4 s and ~26.7 s. 16-byte records grouped 16 per
-// NVS blob (NVS stores each key with ~32 B overhead, so one key per record would
-// fill the 20 KB partition); 12 blobs = the last 192 refreshes (~1.3 days).
-struct __attribute__((packed)) RefreshRec {
-  uint32_t t;            // UTC epoch
-  uint16_t refreshMs;    // panel REFRESH phase
-  uint16_t transferMs;   // SPI transfer
-  uint16_t batt_mV;
-  int16_t  temp_cC;
-  uint16_t minsSincePrev;
-  uint8_t  wakeSrc;      // PMIC WAKE_SRC bits of the boot it happened in
-  uint8_t  flags;        // bit0 USB present, bits1-3 kind (0 dash, 1 photo B, 2 photo A, 3 redraw, 4 empty)
-};
-static_assert(sizeof(RefreshRec) == 16, "keep records 16 bytes");
-static constexpr int RREC_PER_BLOB = 16, RBLOBS = 12;
-
-static void logRefresh(uint8_t kind) {
-  if (!g_lastRefreshMs) return;
-  Preferences rl;
-  rl.begin("rlog", false);
-  uint32_t n = rl.getUInt("n", 0);
-  uint32_t prevT = rl.getUInt("lastt", 0);
-  uint32_t now = (uint32_t)time(nullptr);
-  uint8_t src = 0;
-  pmRead(0x04, &src, 1);                                  // PWR_SRC bit0 = USB
-  RefreshRec r = { now, g_lastRefreshMs, g_lastTransferMs,
-                   (uint16_t)M5.Power.getBatteryVoltage(),
-                   (int16_t)(isnan(curT) ? 0 : lroundf(curT * 100)),
-                   (uint16_t)(prevT && now > prevT ? min<uint32_t>((now - prevT) / 60, 65535) : 65535),
-                   g_wakeSrc, (uint8_t)((src & 1) | (kind << 1)) };
-  char key[8];
-  uint32_t blob = (n / RREC_PER_BLOB) % RBLOBS, slot = n % RREC_PER_BLOB;
-  snprintf(key, sizeof key, "r%u", (unsigned)blob);
-  RefreshRec buf[RREC_PER_BLOB] = {};
-  if (slot) rl.getBytes(key, buf, sizeof buf);            // continue the current blob
-  buf[slot] = r;
-  rl.putBytes(key, buf, sizeof buf);
-  rl.putUInt("n", n + 1);
-  rl.putUInt("lastt", now);
-  rl.end();
-}
-
-static void dumpRefreshLog() {
-  static const char* KIND[] = { "dash", "photoB", "photoA", "redraw", "empty", "?", "?", "?" };
-  Preferences rl;
-  rl.begin("rlog", true);
-  uint32_t n = rl.getUInt("n", 0);
-  uint32_t kept = min<uint32_t>(n, RREC_PER_BLOB * RBLOBS);
-  Serial.println("# refresh log");
-  Serial.println("n,utc_epoch,local,refresh_ms,transfer_ms,batt_mV,temp_c,mins_since_prev,wake_src,usb,kind");
-  RefreshRec buf[RREC_PER_BLOB];
-  int loaded = -1;
-  for (uint32_t i = n - kept; i < n; ++i) {
-    int blob = (i / RREC_PER_BLOB) % RBLOBS;
-    if (blob != loaded) {
-      char key[8];
-      snprintf(key, sizeof key, "r%d", blob);
-      if (rl.getBytes(key, buf, sizeof buf) != sizeof buf) { loaded = -1; continue; }
-      loaded = blob;
-    }
-    const RefreshRec& r = buf[i % RREC_PER_BLOB];
-    time_t t = r.t;
-    struct tm lt;  localtime_r(&t, &lt);
-    char loc[24];  strftime(loc, sizeof loc, "%Y-%m-%d %H:%M:%S", &lt);
-    Serial.printf("%lu,%lu,%s,%u,%u,%u,%.2f,%u,0x%02X,%u,%s\n", (unsigned long)i + 1,
-                  (unsigned long)r.t, loc, r.refreshMs, r.transferMs, r.batt_mV,
-                  r.temp_cC / 100.0f, r.minsSincePrev, r.wakeSrc, r.flags & 1,
-                  KIND[(r.flags >> 1) & 7]);
-  }
-  rl.end();
-  nvs_stats_t st;
-  if (nvs_get_stats(nullptr, &st) == ESP_OK)
-    Serial.printf("# NVS entries: used %u, free %u, total %u\n", (unsigned)st.used_entries,
-                  (unsigned)st.free_entries, (unsigned)st.total_entries);
-  Serial.println("# end refresh log");
 }
 
 static void battLogAppend(uint32_t t, uint16_t mV, int16_t cC) {
@@ -622,7 +540,6 @@ static bool showPhoto(const String& name, bool routeA) {
   M5.Led.setColor(1, 255, 0, 0);  M5.Led.display();
   timedDisplay(routeA ? "photo A" : "photo B");
   if (g_lastRefreshMs) prefs.putUShort("lastref", g_lastRefreshMs);
-  logRefresh(routeA ? 2 : 1);
   M5.Led.setAllColor(0, 0, 0);    M5.Led.display();
   M5.Display.setEpdMode(epd_mode_t::epd_fastest);   // dashboard default
   Serial.printf("photo: %s shown via route %c (load %lu ms, refresh %lu ms)\n", path.c_str(),
@@ -687,14 +604,12 @@ static void serialWindow(uint32_t ms) {
         else if (line == "SYNCLOG") dumpSyncLog();
         else if (line == "PHOTOS") listPhotos();
         else if (line == "PMDUMP") pmDump();
-        else if (line == "RLOG") dumpRefreshLog();
         else if (line == "SDDET 1") sdDetEn(true);
         else if (line == "SDDET 0") sdDetEn(false);
         else if (line == "REDRAW") {                          // timed dashboard refresh now
           drawScreen(M5.Power.getBatteryVoltage() / 1000.0f, false);
           M5.Display.setEpdMode(epd_mode_t::epd_fastest);
           timedDisplay("redraw");
-          logRefresh(3);
         }
         else if (line.startsWith("SHOW ")) {                  // SHOW <name> [A]
           String arg = line.substring(5);
@@ -847,9 +762,8 @@ void setup() {
 
   // Why are we running? A PMIC power-on (timer / button / USB) shows up as a
   // POWERON reset; anything else (reset after flashing, crash) is a dev boot.
-  uint8_t wake = 0;   // (copied to g_wakeSrc below for the refresh log)
+  uint8_t wake = 0;
   pmRead(PM_WAKE_SRC, &wake, 1);
-  g_wakeSrc = wake;
   // POWERON = the PMIC switched us on; DEEPSLEEP = we fell back to deep sleep
   // last cycle. Both continue the run. Anything else (USB reset after flashing,
   // crash) is a dev boot.
@@ -898,7 +812,6 @@ void setup() {
     if (st.emptyStreak == STREAK) {       // first confirmation: draw the message ONCE
       drawEmptyScreen(battV);
       timedDisplay("empty screen");
-      logRefresh(4);
     }
     if (serviceWake) {                    // still allow LOG / SIMV 0 from a button wake
       M5.Led.setColor(0, 0, 0, 255);  M5.Led.display();
@@ -968,7 +881,6 @@ void setup() {
     M5.Led.setColor(1, 255, 0, 0);  M5.Led.display();
     timedDisplay("dashboard");
     if (g_lastRefreshMs) prefs.putUShort("lastref", g_lastRefreshMs);
-    logRefresh(0);
     M5.Led.setAllColor(0, 0, 0);    M5.Led.display();
     ++st.refreshes;
     st.shownT_cC = cC;
