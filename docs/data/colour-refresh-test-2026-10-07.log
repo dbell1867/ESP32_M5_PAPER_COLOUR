@@ -1,0 +1,25 @@
+[14:48:56] -- port up --
+[14:51:42] pattern: all WHITE
+[14:52:10] --- refresh #1 ---
+[14:52:10] BUSY level at start: 1
+[14:52:10] transfer   :    241 ms before 1st BUSY
+[14:52:10] POWER_ON   :    131 ms busy (at 241)
+[14:52:10] REFRESH    :  26689 ms busy (at 973)
+[14:52:10] POWER_OFF  :    152 ms busy (at 27866)
+[14:52:10] edges: 6   total: 28417 ms
+[14:52:28] pattern: all BLACK
+[14:52:56] --- refresh #2 ---
+[14:52:56] BUSY level at start: 1
+[14:52:56] transfer   :    241 ms before 1st BUSY
+[14:52:56] POWER_ON   :    131 ms busy (at 241)
+[14:52:56] REFRESH    :  26689 ms busy (at 973)
+[14:52:56] POWER_OFF  :    152 ms busy (at 27866)
+[14:52:56] edges: 6   total: 28417 ms
+[14:53:02] pattern: six ink bands
+[14:53:31] --- refresh #3 ---
+[14:53:31] BUSY level at start: 1
+[14:53:31] transfer   :    241 ms before 1st BUSY
+[14:53:31] POWER_ON   :    131 ms busy (at 241)
+[14:53:31] REFRESH    :  26691 ms busy (at 973)
+[14:53:31] POWER_OFF  :    152 ms busy (at 27866)
+[14:53:31] edges: 6   total: 28417 ms

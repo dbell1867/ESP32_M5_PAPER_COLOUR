@@ -34,16 +34,17 @@ while time.time() < deadline:
                     continue
                 print(l, flush=True)
                 if "window" in l or "simulated" in l or l.startswith("# battery"):
-                    for c in cmds:
-                        s.write((c + "\n").encode())
-                        time.sleep(0.3)
+                    # Commands were already sent when the port opened; sending them
+                    # again here made the board run everything TWICE (e.g. two 16 s
+                    # photo refreshes). Just wait for the replies.
                     handled = True
-                    quiet = time.time() + 20
+                    quiet = time.time() + 40
                     while time.time() < quiet:
                         more = s.readline().decode(errors="replace").rstrip()
                         if more:
-                            print(more, flush=True); quiet = time.time() + 20
+                            print(more, flush=True); quiet = time.time() + 40
                     sys.exit(0)
-    except (serial.SerialException, OSError):
-        time.sleep(0.2)
+    except Exception:   # SerialException, OSError — and termios.error, which is NEITHER:
+        time.sleep(0.2) # raised when the board powers off while the port is being opened
+
 sys.exit("timed out")

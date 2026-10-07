@@ -22,7 +22,7 @@ while time.time() < end:
                 line = s.readline().decode(errors="replace").rstrip()
                 if line:
                     print(f"[{time.strftime('%H:%M:%S')}] {line}", flush=True)
-    except (serial.SerialException, OSError):
+    except Exception:  # incl. termios.error (port vanishing mid-open)
         if up:
             print(f"[{time.strftime('%H:%M:%S')}] -- port gone (asleep) --", flush=True); up = False
         time.sleep(0.2)

@@ -9,13 +9,15 @@ open questions are recorded so a future session can pick up cold.
 > Board facts: Lesson 01 "The hardware". Reusable workflow + gotchas: the
 > `esp32-board-bringup` skill.
 >
-> **Current position (2026-10-07):** **Lesson 05 complete** — Wi-Fi + daily NTP sync.
-> Credentials provisioned at runtime into NVS `wifi` via `tools/wifi_setup.py` (getpass;
-> never in git or chat). First sync measured the RTC **4.23 s fast after 3 d 19 h (~12.9
-> ppm, ~1.1 s/day)**; auto-sync daily, skipped in low battery, ~5–10 s radio time.
-> **NEXT: choose Lesson 06** (ideas below).
+> **Current position (2026-10-07):** **Lesson 06 complete** — photos on the panel via our
+> own Floyd–Steinberg (route B, clearly better than the driver's dithering on the glass).
+> **Open question:** the panel's REFRESH doubled 14.4 → 26.7 s at ~13:56 on 7 Oct and
+> persists (not our code, not content, not the card). The driver's 20 s busy timeout now
+> cut refreshes short → fixed to 60 s by `tools/patch_m5gfx.py` (pre-build). **SD card kept
+> OUT** (it disturbs the shared SPI bus). NEXT: decide whether to post
+> `docs/m5gfx-issue-draft.md`; optionally time a refresh under the factory firmware.
 >
-> `src/main.cpp` currently holds the **dashboard + NTP** (`stages/lesson5_ntp_sync.cpp`). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
+> `src/main.cpp` currently holds the **dashboard + NTP + photos** (`stages/lesson6_photos.cpp`). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
 
 ---
 
@@ -39,6 +41,8 @@ open questions are recorded so a future session can pick up cold.
 - [x] **Lesson 01** written.
 - [x] **Skill updated** — phase 4 vendor-library question, phase 4b firmware
       backup, gotcha 25(b) "who owns the bus".
+- [x] **Lesson 06** — photos: host-side error diffusion beats the driver on the glass;
+      SD photos + photo-frame hold; refresh-time investigation; timeout patch script.
 - [x] **Lesson 05** — Wi-Fi scan, runtime credentials (NVS `wifi`), SNTP sync with RTC
       drift measurement (~12.9 ppm), daily auto-sync. `docs/lesson-05-wifi-ntp.md`.
 - [x] **Lesson 04** — deep sleep → power bench → 24 h tests → schematic → L1 standby
@@ -53,9 +57,12 @@ open questions are recorded so a future session can pick up cold.
 
 ## ▶ Next
 
-- [ ] **Lesson 06 — pick one:** stretch battery life (refresh every 30 min / wake every
-      5 min, measure); weather over Wi-Fi; a dithered photo on the colour panel; the
-      minimal own e-paper driver; RTC drift over days from the sync log.
+- [ ] Post (or not) `docs/m5gfx-issue-draft.md` to m5stack/M5GFX — owner's decision.
+- [ ] Optional: flash the factory backup, time one refresh by eye, restore.
+- [ ] Re-test the SD-card bus effect deliberately (card in, measure transfer/BUSY) before
+      using photos from SD again — or move photos to the flash data partition.
+- [ ] Lesson 07 ideas: battery life (fewer refreshes — now more valuable at 26.7 s each);
+      weather; minimal own e-paper driver; RTC drift over days.
 
 ## Later (candidates, not yet ordered)
 
@@ -102,6 +109,9 @@ open questions are recorded so a future session can pick up cold.
 - **Lesson 01 stays one document** (not split per stage).
 
 ## Open questions
+
+- Why did the panel's REFRESH go from 14.4 s to 26.7 s on 7 Oct (~13:56)? See Lesson 06 Part 3.
+- What does an inserted SD card do to the shared SPI bus (transfer 241 → 639 ms, BUSY glitches)?
 
 - Why does the Grove 5 V boost draw 24 mA with nothing attached? (schematic)
 - What power-path rule does the PMIC use (battery vs USB) while plugged in?

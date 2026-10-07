@@ -39,6 +39,6 @@ while time.time() < deadline:
                         open(out, "w").write("\n".join(lines) + "\n")
                         print(f"saved {len(lines)} lines to {out}")
                         sys.exit(0)
-    except (serial.SerialException, OSError):
+    except Exception:  # incl. termios.error (port vanishing mid-open)
         time.sleep(0.2)
 sys.exit("timed out")

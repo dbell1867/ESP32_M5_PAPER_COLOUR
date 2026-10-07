@@ -24,6 +24,8 @@ An e-paper **room dashboard** that runs for weeks on the internal battery:
   window to download the battery log over serial
 - **keeps its own clock right:** once a day it joins Wi-Fi for a few seconds, fetches
   network time (NTP), records how far the RTC had drifted, and corrects it
+- **photo frame:** `SHOW <name>` puts a photo from the SD card on the panel, dithered on the
+  computer with Floyd–Steinberg into the six real inks (`tools/photo_prep.py`)
 - **battery protection:** red "low battery" banner below 3.50 V, a clean "Battery empty"
   shutdown below 3.30 V, and the power chip's own cut-off raised from 2.5 V to 3.1 V
 
@@ -95,6 +97,9 @@ Libraries (pinned in `platformio.ini`): M5Unified 0.2.24, M5GFX 0.2.31.
    mode (~10× less drain), then battery protection.
 5. **[Wi-Fi and NTP](docs/lesson-05-wifi-ntp.md)** — scanning first, keeping the Wi-Fi
    password out of code and git, SNTP, and measuring the RTC's drift (~1.1 s/day).
+6. **[A photo on six inks](docs/lesson-06-photo.md)** — error diffusion vs the driver's
+   dithering (previewed, then confirmed on the glass), and an investigation into why the
+   panel's refresh doubled to ~26.7 s.
 
 ## Tools
 
@@ -105,6 +110,8 @@ Libraries (pinned in `platformio.ini`): M5Unified 0.2.24, M5GFX 0.2.31.
 | `tools/follow_serial.py` | follows serial output across sleeps (reopens the port) |
 | `tools/pull_log.py` | waits for a service window and downloads the dashboard's logs |
 | `tools/service.py` | sends commands during a service window (`LOG`, `SCAN`, `SYNC`, `SYNCLOG`, `WIFI?`, `SIMV 3.40` to simulate a battery voltage, `SIMV 0`) |
+| `tools/photo_prep.py` | crop/resize a photo, preview the driver's dithering vs Floyd–Steinberg, write the panel image |
+| `tools/patch_m5gfx.py` | pre-build script: M5GFX e-paper busy timeout 20 s → 60 s |
 | `tools/wifi_setup.py` | stores Wi-Fi credentials on the board — asks for the password without showing it; run in your own terminal |
 
 ## Restoring the factory firmware
@@ -127,11 +134,14 @@ esptool --chip esp32s3 --port /dev/ttyACM0 write-flash 0 backup/papercolor-facto
 - M5GFX owns Arduino's global `SPI` (use it for the SD card), and M5Unified's internal
   I²C bus is port 1 — `Wire.begin(3, 2)` would steal it.
 - G1 is a button, **not** an SD card-detect pin (the docs say both).
-- Full e-paper refresh ≈ 14.4 s of panel time; about 16.1 s per `display()` in total.
+- Full e-paper refresh was ≈ 14.4 s of panel time (16.1 s per `display()`), but on this
+  unit it became **≈ 26.7 s** on 7 Oct (cause unknown). M5GFX's busy wait gives up at
+  20 s and then powers the panel off mid-refresh — `tools/patch_m5gfx.py` raises it to 60 s.
+- An inserted microSD card slows the e-paper's data transfer on the shared SPI bus.
 
 ## Status
 
-Active learning project. Lessons 01–05 complete; the standby dashboard ran a 24 h
+Active learning project. Lessons 01–06 complete; the standby dashboard ran a 24 h
 battery test with no missed wakes (see `docs/PLAN.md` for what's next).
 
 ## License
