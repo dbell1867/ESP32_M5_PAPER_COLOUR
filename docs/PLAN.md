@@ -9,13 +9,11 @@ open questions are recorded so a future session can pick up cold.
 > Board facts: Lesson 01 "The hardware". Reusable workflow + gotchas: the
 > `esp32-board-bringup` skill.
 >
-> **Current position (2026-10-07):** **Lesson 04 complete.** L1 standby v2 ran 24 h:
-> 662 wakes, no gaps, 0 arm retries / 0 fallbacks / 0 power-off failures, −1.55 mV/h
-> (~3 mA avg, ~2–3 weeks per charge, rough). v1's stall cause stays unproven (could be
-> rare); v2's verified arming + fallback guard against it. **NEXT: choose Lesson 05**
-> (ideas below).
+> **Current position (2026-10-07):** Lesson 04 complete **+ Part 7 battery protection**
+> (PMIC cut-off 2.50 → 3.10 V; low banner < 3.50 V; clean "Battery empty" shutdown
+> < 3.30 V; all tested with the `SIMV` hook). **NEXT: choose Lesson 05.**
 >
-> `src/main.cpp` currently holds the **L1 standby dashboard v2** (`stages/lesson4_standby_l1_v2.cpp`). Wake it with the POWER button (A/B/C don't work in L1).
+> `src/main.cpp` currently holds the **L1 standby dashboard v3** (`stages/lesson4_standby_l1_v3_battery.cpp`). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
 
 ---
 
@@ -73,6 +71,9 @@ open questions are recorded so a future session can pick up cold.
       `~/Work/Micro/skill-backups/esp32-board-bringup-2026-10-05/`.
 
 ## Decisions (with reasons)
+
+- **Battery protection (2026-10-07):** PMIC `BATT_LVP` 3.10 V backstop; firmware low
+  3.50 V / empty 3.30 V, each confirmed on 2 consecutive wakes, ignored on USB.
 
 - **RTC holds UTC (2026-10-03):** UK time incl. BST computed via POSIX TZ; matches
   M5Unified's UTC assumption. Re-apply TZ after `setSystemTimeFromRtc()` (its stale

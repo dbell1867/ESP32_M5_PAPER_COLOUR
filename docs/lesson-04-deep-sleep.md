@@ -6,7 +6,7 @@
 what it really costs with an inline USB meter.
 
 > Audience note: Python / CircuitPython background, learning C++.
-> **Status:** complete (Parts 1–6).
+> **Status:** complete (Parts 1–7).
 > Story so far: deep sleep (L2) drained **~38 mA average** on battery; every switchable
 > rail was verified off; the vendor schematic showed why, and the fix is the power
 > chip's **L1 standby** (everything off, PMIC timer powers the board back on).
@@ -359,6 +359,60 @@ silence. (Gotcha 29 one more time: check your tool can show you the answer.)
 
 ---
 
+## Part 7 — Battery protection (`stages/lesson4_standby_l1_v3_battery.cpp`)
+
+**Question:** with weeks on battery, what stops it draining the LiPo too far?
+
+**What was there:**
+
+| Layer | Behaviour | Verdict |
+|---|---|---|
+| M5PM1 low-voltage cut-off | powers the system off below `2.0 V + BATT_LVP × 7.81 mV`; default `0x40` = **2.50 V**; back on at +100 mV or USB | exists, but 2.5 V is the very bottom for a LiPo |
+| Protection board inside the pack | unknown — the schematic only shows a 2-pin connector | can't rely on it |
+| IP2315 charger | charges only | — |
+| Our firmware | read the voltage, never acted on it | **none** |
+
+**What v3 adds:**
+
+1. **Hardware backstop raised to 3.10 V** — `BATT_LVP = 0x8D` (141 → 3.101 V), written and
+   **read back** every wake. Even if the firmware fails, the PMIC now cuts off at a
+   LiPo-friendly voltage.
+2. **Low mode** — below **3.50 V on two consecutive wakes** (light-load reading at the
+   start of a wake; ignored on USB, from the PMIC's `PWR_SRC` bit 0): red
+   **"LOW BATTERY – please charge"** banner, no early refreshes, scheduled refresh every
+   30 min.
+3. **Clean shutdown** — below **3.30 V on two consecutive wakes**: draw **"Battery empty –
+   Please charge"** *once* (while there's still margin for a 16 s refresh), then power
+   off with **no timer** — the deliberate opposite of "never power off without a timer".
+   E-paper keeps the message at zero power; USB or the power button wake it.
+4. The state struct had to stay at 32 bytes: `refreshes` went 32 → 16 bits (~16 months
+   at 136/day) to make room for two streak counters.
+
+**Testing without draining a battery — a simulation hook.** `SIMV 3.45` in a service
+window stores a fake on-battery voltage in NVS; `SIMV 0` clears it.
+
+| Step | Expected | Seen |
+|---|---|---|
+| `LOG` after flashing | cut-off reads back 3.10 V | `PMIC cut-off 0x8D (3.101 V)` |
+| SIMV 3.45, two wakes, power button | red banner | **banner shown**; log `batt 3.45 V LOW` |
+| SIMV 3.25, two timer wakes | "Battery empty" drawn once, then no more wakes | 11:12 short wake → 11:14 19 s wake (refresh) → **silence** for 12+ min |
+| power button (still empty) | no redraw, service window | screen unchanged; `SIMV 0` accepted |
+| power button | normal dashboard, wakes resume | **normal screen**; wakes every 2 min from 11:40 |
+
+**Tool bugs found on the way (all mine):**
+- the first upload attempt grabbed a **1-second routine wake** — PlatformIO then picked
+  the wrong port (`/dev/ttyS0`). Fix: wait until the port has been up for 2 s, and pass
+  `--upload-port`.
+- `tools/service.py` waited for the "window" line, which the board can print **before**
+  the host has the port open. Fix: send the commands as soon as the port opens (the
+  board buffers them until its window reads them).
+- a `pkill -f tools/service.py` killed the very command that contained it — so the tool
+  fix silently never landed; a `grep -c` guard before running caught that.
+
+**Limits:** the thresholds are reasonable starting points, not tuned — a LiPo's resting
+voltage only roughly maps to charge. After a clean shutdown the PMIC still draws µA, so
+**charge within ~2 weeks** of seeing the message (rough estimate).
+
 ## Files
 
 | File | What |
@@ -369,6 +423,8 @@ silence. (Gotcha 29 one more time: check your tool can show you the answer.)
 | `stages/lesson4_deep_sleep_v2.cpp` | v2.1: rails off + register read-back |
 | `stages/lesson4_standby_l1.cpp` | L1 standby: PMIC timer power-on, state in PMIC RTC_MEM |
 | `tools/pull_log.py` | pull logs during a service window |
+| `stages/lesson4_standby_l1_v3_battery.cpp` | v3: battery protection (cut-off 3.10 V, low banner, clean shutdown) |
+| `tools/service.py` | send commands (`LOG`, `SIMV x.xx`) during a service window |
 
 ## Glossary
 

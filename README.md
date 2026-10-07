@@ -22,6 +22,8 @@ An e-paper **room dashboard** that runs for weeks on the internal battery:
   except itself and the RTC, and its timer switches the board back on every 2 minutes
 - press the **power button** (or plug in USB) for an immediate refresh and a 30 s
   window to download the battery log over serial
+- **battery protection:** red "low battery" banner below 3.50 V, a clean "Battery empty"
+  shutdown below 3.30 V, and the power chip's own cut-off raised from 2.5 V to 3.1 V
 
 Measured on battery (rough, from voltage slope): ~**3 mA** average in standby mode vs
 ~38 mA with ordinary ESP32 deep sleep — roughly 2–3 weeks per charge (see Lesson 04).
@@ -98,6 +100,7 @@ Libraries (pinned in `platformio.ini`): M5Unified 0.2.24, M5GFX 0.2.31.
 | `tools/rtc_sync.py` | sets the RTC to the host's UTC on a second boundary and measures the offset |
 | `tools/follow_serial.py` | follows serial output across sleeps (reopens the port) |
 | `tools/pull_log.py` | waits for a service window and downloads the dashboard's logs |
+| `tools/service.py` | sends commands during a service window (`LOG`, `SIMV 3.40` to simulate a battery voltage, `SIMV 0`) |
 
 ## Restoring the factory firmware
 
