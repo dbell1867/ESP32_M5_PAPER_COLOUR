@@ -22,6 +22,8 @@ An e-paper **room dashboard** that runs for weeks on the internal battery:
   except itself and the RTC, and its timer switches the board back on every 2 minutes
 - press the **power button** (or plug in USB) for an immediate refresh and a 30 s
   window to download the battery log over serial
+- **keeps its own clock right:** once a day it joins Wi-Fi for a few seconds, fetches
+  network time (NTP), records how far the RTC had drifted, and corrects it
 - **battery protection:** red "low battery" banner below 3.50 V, a clean "Battery empty"
   shutdown below 3.30 V, and the power chip's own cut-off raised from 2.5 V to 3.1 V
 
@@ -90,7 +92,9 @@ Libraries (pinned in `platformio.ini`): M5Unified 0.2.24, M5GFX 0.2.31.
 4. **[Deep sleep and real power](docs/lesson-04-deep-sleep.md)** — deep sleep, a power
    bench, why a USB meter can't see this board's load, a 24 h battery test that found
    ~35 mA hiding in "deep sleep", the vendor schematic, and the power chip's standby
-   mode (~10× less drain).
+   mode (~10× less drain), then battery protection.
+5. **[Wi-Fi and NTP](docs/lesson-05-wifi-ntp.md)** — scanning first, keeping the Wi-Fi
+   password out of code and git, SNTP, and measuring the RTC's drift (~1.1 s/day).
 
 ## Tools
 
@@ -100,7 +104,8 @@ Libraries (pinned in `platformio.ini`): M5Unified 0.2.24, M5GFX 0.2.31.
 | `tools/rtc_sync.py` | sets the RTC to the host's UTC on a second boundary and measures the offset |
 | `tools/follow_serial.py` | follows serial output across sleeps (reopens the port) |
 | `tools/pull_log.py` | waits for a service window and downloads the dashboard's logs |
-| `tools/service.py` | sends commands during a service window (`LOG`, `SIMV 3.40` to simulate a battery voltage, `SIMV 0`) |
+| `tools/service.py` | sends commands during a service window (`LOG`, `SCAN`, `SYNC`, `SYNCLOG`, `WIFI?`, `SIMV 3.40` to simulate a battery voltage, `SIMV 0`) |
+| `tools/wifi_setup.py` | stores Wi-Fi credentials on the board — asks for the password without showing it; run in your own terminal |
 
 ## Restoring the factory firmware
 
@@ -126,7 +131,7 @@ esptool --chip esp32s3 --port /dev/ttyACM0 write-flash 0 backup/papercolor-facto
 
 ## Status
 
-Active learning project. Lessons 01–04 complete; the standby dashboard ran a 24 h
+Active learning project. Lessons 01–05 complete; the standby dashboard ran a 24 h
 battery test with no missed wakes (see `docs/PLAN.md` for what's next).
 
 ## License

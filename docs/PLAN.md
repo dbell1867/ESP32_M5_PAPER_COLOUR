@@ -9,11 +9,13 @@ open questions are recorded so a future session can pick up cold.
 > Board facts: Lesson 01 "The hardware". Reusable workflow + gotchas: the
 > `esp32-board-bringup` skill.
 >
-> **Current position (2026-10-07):** Lesson 04 complete **+ Part 7 battery protection**
-> (PMIC cut-off 2.50 → 3.10 V; low banner < 3.50 V; clean "Battery empty" shutdown
-> < 3.30 V; all tested with the `SIMV` hook). **NEXT: choose Lesson 05.**
+> **Current position (2026-10-07):** **Lesson 05 complete** — Wi-Fi + daily NTP sync.
+> Credentials provisioned at runtime into NVS `wifi` via `tools/wifi_setup.py` (getpass;
+> never in git or chat). First sync measured the RTC **4.23 s fast after 3 d 19 h (~12.9
+> ppm, ~1.1 s/day)**; auto-sync daily, skipped in low battery, ~5–10 s radio time.
+> **NEXT: choose Lesson 06** (ideas below).
 >
-> `src/main.cpp` currently holds the **L1 standby dashboard v3** (`stages/lesson4_standby_l1_v3_battery.cpp`). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
+> `src/main.cpp` currently holds the **dashboard + NTP** (`stages/lesson5_ntp_sync.cpp`). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
 
 ---
 
@@ -37,6 +39,8 @@ open questions are recorded so a future session can pick up cold.
 - [x] **Lesson 01** written.
 - [x] **Skill updated** — phase 4 vendor-library question, phase 4b firmware
       backup, gotcha 25(b) "who owns the bus".
+- [x] **Lesson 05** — Wi-Fi scan, runtime credentials (NVS `wifi`), SNTP sync with RTC
+      drift measurement (~12.9 ppm), daily auto-sync. `docs/lesson-05-wifi-ntp.md`.
 - [x] **Lesson 04** — deep sleep → power bench → 24 h tests → schematic → L1 standby
       v2 (verified timer arming): ~38 mA → ~3 mA average.
 - [x] **Lesson 04 Parts 1–2** — deep-sleep dashboard; power bench (Grove 5 V = 24 mA;
@@ -49,10 +53,9 @@ open questions are recorded so a future session can pick up cold.
 
 ## ▶ Next
 
-- [ ] **Lesson 05 — pick one:** stretch battery life (refresh every 30 min / wake every
-      5 min, measure); RTC-interrupt backup wake; Wi-Fi (NTP time sync, or show weather);
-      a photo/image on the colour panel with your own dithering; the minimal own
-      e-paper driver exercise.
+- [ ] **Lesson 06 — pick one:** stretch battery life (refresh every 30 min / wake every
+      5 min, measure); weather over Wi-Fi; a dithered photo on the colour panel; the
+      minimal own e-paper driver; RTC drift over days from the sync log.
 
 ## Later (candidates, not yet ordered)
 
@@ -71,6 +74,10 @@ open questions are recorded so a future session can pick up cold.
       `~/Work/Micro/skill-backups/esp32-board-bringup-2026-10-05/`.
 
 ## Decisions (with reasons)
+
+- **Wi-Fi credentials (2026-10-07):** never in source/git/chat — `tools/wifi_setup.py`
+  (getpass) → NVS namespace `wifi`; board reports only the password length.
+- **NTP:** daily; skip in low battery; before drawing; Wi-Fi off after.
 
 - **Battery protection (2026-10-07):** PMIC `BATT_LVP` 3.10 V backstop; firmware low
   3.50 V / empty 3.30 V, each confirmed on 2 consecutive wakes, ignored on USB.
