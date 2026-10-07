@@ -13,7 +13,8 @@ Usage:
     --x/--y   centre of the crop, as a fraction of the (rotated) photo (0..1)
     --zoom    >1 crops tighter around the subject
 Writes images/<name>/: source.png, driver_quality.png, driver_fast.png,
-driver_fastest.png, fs.png, fs_serp.png, compare.png, <name>.epd4
+driver_fastest.png, fs.png, fs_serp.png, compare.png, <name>.epd4 (route B, ours)
+and <name>.jpg (the same 400x600 crop, for route A: the board decodes, driver dithers)
 (images/ is git-ignored: personal photos never get committed.)
 """
 import argparse, os, subprocess, sys
@@ -38,6 +39,16 @@ def load(path, cx, cy, zoom):
         ["magick", path, "-auto-orient", "-crop", f"{cw:.0f}x{ch:.0f}+{x0:.0f}+{y0:.0f}",
          "+repage", "-resize", f"{W}x{H}!", "-depth", "8", "rgb:-"])
     assert len(raw) == W * H * 3, len(raw)
+    jpg = os.path.join(os.path.dirname(os.path.abspath(path)),
+                       os.path.splitext(os.path.basename(path))[0],
+                       os.path.splitext(os.path.basename(path))[0] + ".jpg")
+    os.makedirs(os.path.dirname(jpg), exist_ok=True)
+    # The same crop as a small baseline JPEG, for route A (the board decodes it and
+    # the DRIVER dithers). Baseline, not progressive: embedded decoders prefer it.
+    subprocess.check_call(
+        ["magick", path, "-auto-orient", "-crop", f"{cw:.0f}x{ch:.0f}+{x0:.0f}+{y0:.0f}",
+         "+repage", "-resize", f"{W}x{H}!", "-strip", "-interlace", "none",
+         "-sampling-factor", "4:2:0", "-quality", "90", jpg])
     print(f"{os.path.basename(path)}: {iw}x{ih} -> crop {cw:.0f}x{ch:.0f} at "
           f"({x0:.0f},{y0:.0f}) -> {W}x{H}")
     return [[tuple(raw[(y * W + x) * 3:(y * W + x) * 3 + 3]) for x in range(W)]
