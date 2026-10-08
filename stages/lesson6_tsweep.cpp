@@ -174,7 +174,6 @@ static void drawScreen(float battV, bool lowBatt) {
 
   M5.Display.fillScreen(INK_WHITE);
   M5.Display.setTextColor(INK_BLACK);
-  M5.Display.setTextSize(1);   // never inherit a size from earlier drawing (TFSWEEP bug)
   M5.Display.setFont(&fonts::FreeSansBold18pt7b);
   M5.Display.setTextDatum(top_center);
   snprintf(buf, sizeof buf, "%s %d %s", DAYS[lt.tm_wday], lt.tm_mday, MONTHS[lt.tm_mon]);
@@ -251,7 +250,6 @@ static void drawEmptyScreen(float battV) {
   localtime_r(&now, &lt);
   char buf[64];
   M5.Display.fillScreen(INK_WHITE);
-  M5.Display.setTextSize(1);
   M5.Display.fillRoundRect(20, 120, W - 40, 220, 18, INK_RED);
   M5.Display.setTextColor(INK_WHITE);
   M5.Display.setTextDatum(middle_center);
@@ -707,51 +705,6 @@ static void tempSweep() {
   }
 }
 
-// Forced temperature BEFORE the controller's first refresh after a reset (the
-// in-wake TSWEEP showed the refresh time is fixed for the whole wake). One step per
-// boot: pulse the panel's RST, M5.begin re-inits it, force, refresh, store, restart.
-static const int TF_STEPS[] = { INT16_MIN, 25, 12, 40, 0, INT16_MIN };
-static constexpr int TF_N = sizeof TF_STEPS / sizeof TF_STEPS[0];
-
-static void tforceDump() {
-  Preferences p; p.begin("tfs", true);
-  Serial.println("# forced-temperature sweep (one controller reset per step)");
-  for (int i = 0; i < TF_N; ++i) {
-    char k[6]; snprintf(k, sizeof k, "r%d", i);
-    if (TF_STEPS[i] == INT16_MIN) Serial.printf("step %d internal : ", i);
-    else                          Serial.printf("step %d %3d C    : ", i, TF_STEPS[i]);
-    Serial.printf("REFRESH %u ms\n", p.getUShort(k, 0));
-  }
-  p.end();
-}
-
-// One sweep step per boot; restarts until the last step, which prints the results.
-static void tforceStep() {
-  Preferences p; p.begin("tfs", false);
-  int i = p.getInt("i", -1);
-  if (i < 0 || i >= TF_N) { p.end(); return; }
-  int t = TF_STEPS[i];
-  if (t != INT16_MIN) forceTemp(t);
-  M5.Display.fillScreen(TFT_WHITE);
-  M5.Display.setTextColor(TFT_BLACK);
-  M5.Display.setTextSize(3);
-  M5.Display.setCursor(20, 40);
-  if (t == INT16_MIN) M5.Display.printf("Sweep step %d: internal", i);
-  else                M5.Display.printf("Sweep step %d: %d C", i, t);
-  M5.Display.setEpdMode(epd_mode_t::epd_fastest);
-  char what[24];
-  snprintf(what, sizeof what, t == INT16_MIN ? "step %d internal" : "step %d forced", i);
-  timedDisplay(what);
-  M5.Display.setTextSize(1);   // don't leave x3 behind for the dashboard
-  char k[6]; snprintf(k, sizeof k, "r%d", i);
-  p.putUShort(k, g_lastRefreshMs);
-  p.putInt("i", i + 1);
-  p.end();
-  if (i + 1 < TF_N) { Serial.flush(); delay(200); ESP.restart(); }
-  Preferences q; q.begin("tfs", false); q.putInt("i", -1); q.end();
-  tforceDump();
-}
-
 static void serialWindow(uint32_t ms) {
   uint32_t t0 = millis();
   String line;
@@ -772,12 +725,6 @@ static void serialWindow(uint32_t ms) {
         else if (line == "PMDUMP") pmDump();
         else if (line == "RLOG") dumpRefreshLog();
         else if (line == "TSWEEP") tempSweep();
-        else if (line == "TFSWEEP") {             // start the per-reset sweep
-          Preferences p; p.begin("tfs", false); p.clear(); p.putInt("i", 0); p.end();
-          Serial.println("tfsweep: starting, one restart per step");
-          Serial.flush(); delay(200); ESP.restart();
-        }
-        else if (line == "TFRES") tforceDump();
         else if (line == "SDDET 1") sdDetEn(true);
         else if (line == "SDDET 0") sdDetEn(false);
         else if (line == "REDRAW") {                          // timed dashboard refresh now
@@ -924,15 +871,6 @@ void setup() {
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0);
 
-  {
-    Preferences p; p.begin("tfs", true);
-    int i = p.isKey("i") ? p.getInt("i", -1) : -1;
-    p.end();
-    if (i >= 0) {          // sweep step: hardware-reset the panel controller first
-      pinMode(43, OUTPUT); digitalWrite(43, LOW); delay(20);
-      digitalWrite(43, HIGH); delay(50);
-    }
-  }
   auto cfg = M5.config();
   cfg.internal_spk  = false;
   cfg.internal_mic  = false;
@@ -943,7 +881,6 @@ void setup() {
   M5.Display.setAutoDisplay(false);
   M5.Display.setEpdMode(epd_mode_t::epd_fastest);
   M5.Led.setBrightness(40);
-  tforceStep();            // no-op unless a TFSWEEP is in progress
 
   // Why are we running? A PMIC power-on (timer / button / USB) shows up as a
   // POWERON reset; anything else (reset after flashing, crash) is a dev boot.

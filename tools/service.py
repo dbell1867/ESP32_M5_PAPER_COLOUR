@@ -38,11 +38,11 @@ while time.time() < deadline:
                     # again here made the board run everything TWICE (e.g. two 16 s
                     # photo refreshes). Just wait for the replies.
                     handled = True
-                    quiet = time.time() + 40
+                    quiet = time.time() + 60
                     while time.time() < quiet:
                         more = s.readline().decode(errors="replace").rstrip()
                         if more:
-                            print(more, flush=True); quiet = time.time() + 40
+                            print(more, flush=True); quiet = time.time() + 60
                     sys.exit(0)
     except Exception:   # SerialException, OSError — and termios.error, which is NEITHER:
         time.sleep(0.2) # raised when the board powers off while the port is being opened
