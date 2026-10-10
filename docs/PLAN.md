@@ -9,13 +9,13 @@ open questions are recorded so a future session can pick up cold.
 > Board facts: Lesson 01 "The hardware". Reusable workflow + gotchas: the
 > `esp32-board-bringup` skill.
 >
-> **Current position (2026-10-07 16:45):** the panel REFRESH is **intermittent** (~14.4 s or
-> ~26.7 s under unchanged code; factory-firmware "fix" was coincidence; GPIO4 hypothesis
-> falsified). Every refresh is now logged with context (`RLOG`, NVS `rlog`, last 192).
-> **NEXT: after ~1 day of normal use (USB and battery), pull `tools/service.py RLOG` and look
-> for what the slow refreshes share.** 60 s timeout patch keeps slow refreshes safe.
+> **Current position (2026-10-10):** Lesson 06 complete. The panel REFRESH varies 14–39 s
+> (a program chosen at each power-up since 7 Oct; forced temperature has no effect); the
+> 60 s timeout patch covers it. Light sleep during refresh is on (`LS`), saving ≤14 %.
+> Battery work closed. **Open:** post the M5GFX issue (`docs/m5gfx-issue-draft.md`) — owner's
+> decision; next lesson not chosen yet.
 >
-> `src/main.cpp` currently holds the **dashboard + photos + refresh log** (`stages/lesson6_refresh_log.cpp`). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
+> `src/main.cpp` currently holds the **dashboard + photos + refresh log + light sleep** (`stages/lesson6_light_sleep.cpp`). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
 
 ---
 
@@ -108,7 +108,7 @@ open questions are recorded so a future session can pick up cold.
 
 ## Open questions
 
-- What switches the panel's REFRESH between ~14.4 s and ~26.7 s (intermittent since 7 Oct)? Lesson 06 Part 3; `RLOG` data.
+- What changed on 7 Oct so the panel now chooses among 14–39 s programs at power-up (was always 14.4 s)? Lesson 06 Part 3e; a question for M5Stack.
 - What does an inserted SD card do to the shared SPI bus (transfer 241 → 639 ms, BUSY glitches)?
 
 - Why does the Grove 5 V boost draw 24 mA with nothing attached? (schematic)
@@ -121,5 +121,5 @@ open questions are recorded so a future session can pick up cold.
 - Why does the booster command `0x06` use `…0x17` at init but `…0x27` before a
   refresh? (Unexplained in the driver.)
 - What do the "CMDH" bytes (`0xAA 0x49 0x55 …`) and `0x84` do? (Vendor magic.)
-- Does the controller switch waveform below ~8 °C? (Fridge test reached only 8.4 °C in
-  the case; refresh was 49 ms *faster* cold. Don't use a freezer.)
+- ~~Does the controller switch waveform below ~8 °C?~~ Superseded: since 7 Oct it switches
+  programs at ordinary temperatures too (Lesson 06 3c/3e).

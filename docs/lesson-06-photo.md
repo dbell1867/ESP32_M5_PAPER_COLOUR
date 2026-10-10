@@ -5,8 +5,9 @@
 *who* turns millions of colours into six inks: the display driver, or us.
 
 > Audience note: Python / CircuitPython background, learning C++.
-> **Status:** complete (Parts 1–4), with one **open question**: why this panel's refresh
-> switches between ~14.4 s and ~26.7 s (intermittent since 7 October — Part 3).
+> **Status:** complete (Parts 1–4). One question is left for M5Stack: since 7 October the
+> panel chooses among several refresh programs (14–39 s) at each power-up; before that it
+> always took 14.4 s (Part 3).
 >
 > **Privacy:** the photos are personal. They, their previews and the converted panel
 > images live in `images/`, which is **git-ignored**; only the tools and this text are
@@ -20,6 +21,9 @@
 2. Understand **error diffusion** (Floyd–Steinberg) and why it suits photos.
 3. Compare the driver's dithering with your own *before* touching the hardware.
 4. Produce the exact bytes the panel takes (4 bits per pixel, 2 pixels per byte).
+5. Investigate an intermittent hardware behaviour: log context, test hypotheses that can
+   fail, and check new conclusions against old data.
+6. Hook into a library without forking it (a weak function), and light-sleep while waiting.
 
 ---
 
@@ -158,7 +162,9 @@ window now **blinks LED 0 blue** the whole time it is open ("awake and listening
 | photo refreshed **twice** | `service.py` sent commands on connect **and** again on the window line | send once per connection |
 | tool "succeeded" without doing anything | `termios.error` (port vanishing mid-open) is neither `SerialException` nor `OSError` → crash; my `grep` hid the traceback **and** the exit code | catch any exception and keep waiting |
 
-## Part 3 — The refresh that doubled (open question)
+## Part 3 — The refresh time that changed (an investigation)
+
+### 3a. It doubled (7 Oct)
 
 Every photo refresh took ~28 s. Lesson 02 had measured ~16 s. Lesson 02's BUSY-pin timer
 (now built into every refresh: `timedDisplay()`) was used to bisect:
@@ -179,7 +185,7 @@ What it establishes:
 1. **The panel's own refresh doubled — 14.4 s → 26.7 s — from about 13:56 on 7 October**,
    and stayed slow for hours: across firmware (even the original Lesson 02 program), with
    or without the card, regardless of the previous image, and after a complete refresh.
-   (Later the same day it came and went — see the update below.)
+   (Later the same day it came and went — 3b.)
 2. **Content doesn't matter:** white, black and six ink bands are identical to ±2 ms.
    This panel runs one fixed sequence per refresh (and colour count was not what
    changed — Lesson 02's six-ink test image took 14.4 s too).
@@ -192,19 +198,15 @@ What it establishes:
 5. **Not our code:** the factory firmware uses M5GFX **0.2.21** (commit `5268353`, 15 May)
    whose `Panel_ED2208` init bytes, refresh sequence and 20 s timeout are **identical**.
 
-Not established: **why** the panel changed. Ruled out by measurement: our firmware,
-previous content, the card at refresh time, colour content, an interrupted-refresh loop.
-Remaining ideas need the controller's datasheet: its internal temperature reading (but the
-fridge test showed no step between 8 and 24 °C), or a persistent controller setting
-changed by garbled bus traffic while the card disturbed the bus (13:56 was the first boot
-with the card in under the new firmware) — speculation, not evidence. M5Stack quotes
-"15–30 s" (and elsewhere "10–20 s"), so 26.7 s is inside their range.
+At this point, ruled out by measurement: our firmware, previous content, the card at
+refresh time, colour content, an interrupted-refresh loop. M5Stack quotes "15–30 s"
+(and elsewhere "10–20 s"), so 26.7 s is inside their range.
 
 > **Method note (gotcha 22):** after three plausible hypotheses failed, the useful moves
 > were controlled comparisons — same program, same screen, then vs now; card in vs out;
 > colour vs none — each designed so the result *could* come out differently.
 
-### Update — it is intermittent, not persistent (later on 7 Oct)
+### 3b. It comes and goes (7 Oct, afternoon)
 
 | Time | REFRESH | Situation |
 |---|---|---|
@@ -212,35 +214,140 @@ with the card in under the new firmware) — speculation, not evidence. M5Stack 
 | 13:56 – 15:32 | ~26.7 s | photo firmware, test programs, restored dashboard |
 | ~16:18 | "15–16 s" by stopwatch | **factory firmware** (flashed from the backup; NVS saved and restored around it) |
 | 16:24 | 14.5 s | our dashboard, first boot straight after the factory firmware |
-| ~16:30 | 26.7 s | our dashboard after an upload |
 | 16:31 | 14.2 s ×3 | first boot after an upload, then two REDRAWs |
 | 16:38 | 26.7 s ×2 | first boot after an upload, then a REDRAW |
 
-- The factory firmware "fixing" it was most likely **coincidence**: the slow state comes
-  and goes under our own, unchanged firmware.
-- **Falsified:** the factory firmware drives PM1 GPIO4 (`SD_DET_EN`) as a push-pull output
-  HIGH; ours leaves it an input (and with `HOLD_CFG = 0` every standby power-off resets
-  PM1 GPIOs). But the panel was fast with GPIO4 still an input, and setting it HIGH changed
-  nothing (`SDDET 1`). The slow-state power-chip registers are in
+- **The factory firmware "fixing" it was coincidence.** It looked decisive — slow for
+  hours, factory firmware, fast again — but minutes later our own unchanged firmware was
+  slow again. *With an intermittent fault, one before/after is not evidence.*
+- **Falsified:** the factory firmware drives PM1 GPIO4 (`SD_DET_EN`) HIGH; ours leaves it an
+  input. The panel was fast with GPIO4 still an input, and setting it HIGH (`SDDET 1`)
+  changed nothing. Power-chip registers in the slow state:
   `docs/data/pmic-regs-slow-2026-10-07.txt` (`PMDUMP`).
-- Side finding: the board's real **card-detect** is **PM1 GPIO1** (`SD_DEC`, read by the
-  factory firmware via the power chip) — which is why ESP32 G1 never saw the card.
-- Next: **collect data, not hypotheses** (gotcha 22). Every refresh is now logged with
-  context — REFRESH and transfer time, battery mV, temperature, minutes since the previous
-  refresh, PMIC wake source, USB present, kind — in NVS (`RLOG`, last 192 refreshes), and
-  the hourly battery log has a `refresh_ms` column. To be analysed after a day of normal use.
+- Side finding: the board's real **card-detect** is **PM1 GPIO1** (`SD_DEC`, read through the
+  power chip) — which is why ESP32 G1 never saw the card.
+
+Six hypotheses had failed. **Gotcha 22: stop guessing, collect data.**
+
+### 3c. A refresh log (`RLOG`)
+
+Every refresh now stores a 16-byte record in NVS: time, REFRESH and transfer ms, battery
+mV, temperature, minutes since the previous refresh, PMIC wake source, USB present, kind
+(dashboard/photo/redraw) and — later — whether the ESP32 light-slept. Records are grouped
+16 per NVS blob (one key per record would cost ~32 bytes of overhead each and fill the
+20 KB partition); 12 blobs hold the last ~180 refreshes. `RLOG` dumps it as CSV.
+
+First 17 hours (`docs/data/refresh-log-2026-10-08.csv`, 113 refreshes):
+
+| REFRESH | Count | Board temp (SHT40) |
+|---|---|---|
+| **14.2 s** | 26 | 19.9–22.8 °C only |
+| **25.0 s** | 52 | 14–20 °C |
+| **26.6–26.8 s** | 26 | 9.8–13 °C, *and* 19–23 °C |
+| 33–39 s | 8 | scattered |
+
+- **Discrete levels, not drift:** the panel runs one of a few fixed programs.
+- **USB doesn't matter:** fast and slow both occur on USB (21 fast / 8 slow) and on battery (6 / 78).
+- **Temperature does matter now:** in a cold spell the board fell to 9.8 °C and back, and
+  the time stepped with it — 14.2 → 25.0 → 26.6 s (≤13 °C) → 25.0 → 14.2 s.
+- **Within one wake it never changes.** Every REDRAW in a wake matched that wake's first
+  refresh (3 of 3, 2 of 2, later 10 of 10). It only changes *between* wakes — and every
+  standby powers the panel controller fully off.
+
+### 3d. Telling the controller the temperature (no effect)
+
+Controllers in this family (the ED2208's init bytes match the UC81xx command set) accept a
+forced temperature: `CCSET 0xE0 = 0x02` ("use TSSET"), then `TSSET 0xE5 = °C`. M5GFX never
+sends these. The panel's chip-select is G44, and `M5.Display.getPanel()->getBus()` gives
+the bus, so a sketch can send them itself.
+
+| Test | When the temperature was sent | Result |
+|---|---|---|
+| `TSWEEP` | in one wake, before each of 9 redraws: internal, 25, 21, 18, 12, 5, 30, 40 °C, internal | **35.3 s every time** (±5 ms) |
+| `TFSWEEP` | before the **first** refresh after a hardware reset of the controller (RST G43), one restart per step: internal, 25, 12, 40, 0 °C, internal | **26.7 s every time** (±5 ms) |
+
+The ED2208 **ignores** these commands (or uses them for something else). Six hardware
+resets in a row also kept the same program — so the choice is made at **power-up**, not at
+reset, and we can't steer it from outside.
+
+### 3e. Putting it together — and a correction
+
+The tempting conclusion after 3c was *"the panel picks its program by temperature; that's
+normal for e-paper"* (cold pigment moves slowly, so colder bands get longer drive
+sequences). **Checking it against older data killed it.** Lesson 03's fridge test
+(3 October) ran from 23.5 °C down to **8.4 °C** and every refresh took **14.4 s**. Since
+7 October the same temperatures give 14, 25, 27 or 35 s.
+
+What the evidence supports:
+
+1. **Before 7 Oct ~13:56:** one program, ~14.4 s, at every temperature tested (8–24 °C).
+2. **Since then:** a choice among several programs, made at each **power-up** and fixed until
+   the next one; temperature shifts the choice, but the same temperature can give
+   different programs.
+3. **Something about the panel changed at 13:56 on 7 October**, and it persists across
+   firmware, resets and power cycles.
+
+What it might be — **speculation, not evidence:** the controller may keep state in its own
+non-volatile memory (a refresh/age counter that switches to stronger "conditioning"
+programs, or a setting altered by garbled bus traffic — 13:56 was the first boot with the
+SD card disturbing the shared bus). Only the ED2208 datasheet or M5Stack can say; it's
+now the central question in the issue draft.
+
+**What it means in practice:** refreshes take **14–39 s**, so the driver's 20 s timeout is
+too short for most of them; the 60 s patch (Part 4) covers the whole range. *Never size a
+timeout from one measurement.*
+
+### 3f. Light sleep during the refresh
+
+The slow programs cost battery. During a refresh the panel does the work and the ESP32
+only waits for BUSY, so it can **light-sleep** instead:
+
+- `tools/patch_m5gfx.py` now also replaces the `delay(10)` in the driver's wait loop with a
+  call to `m5gfx_ed2208_busy_wait_hook()` — a **weak** function whose default is that same
+  `delay(10)`, so the library behaves exactly as before unless the firmware defines its own.
+- Ours sleeps until BUSY goes HIGH, or 1 s at most (so the driver's 60 s timeout still
+  counts), with the timing ISR paused and the missed rising edge recorded on waking.
+- Checked with `nm` that the linker took **ours** (186 bytes, from `main.cpp`), not the
+  two-line default — a weak symbol that loses fails silently.
+- Every refresh still completes normally, and the **USB serial port survived** light sleep
+  on this ESP32-S3. `LS 0/1/?` switches it (default: on battery only; currently forced on).
+
+| | 8–9 Oct, no light sleep | **9–10 Oct, light sleep** |
+|---|---|---|
+| On battery | 17.2 h, 99 refreshes | 21.3 h, 124 refreshes |
+| Average refresh | 24.9 s | 21.3 s |
+| Drain, same band 4.108–4.160 V | −3.68 ± 0.10 mV/h | **−3.18 ± 0.17 mV/h** |
+
+About **14 % less** — but the refreshes were also 13 % shorter that day (1 °C warmer), so
+the light-sleep share **can't be separated**: "between a little and 14 %". That's far less
+than expected if the waiting ESP32 drew ~40 mA, so the **panel's own drive** is most likely
+the main cost of a refresh. Kept, because it's free. The real lever would be refreshing less
+often — deliberately not done (enough battery work for this board).
+
+### Bugs of mine along the way
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| date drawn 3× too large and fuzzy after the sweep | sweep screens `setTextSize(3)`; the dashboard's date line inherited it (a bitmap font scaled 3× looks blocky) | reset after the sweep; every screen now starts with `setTextSize(1)` |
+| upload failed: "Unable to verify flash chip connection"; a garbled serial line | my earlier 8-minute `follow_serial.py` was still reading the port (G66) | wait for or stop helpers before uploading |
+| a wait loop that never ended | `pgrep -f 'follow_serial…'` matched its **own** command line (G66) | stop tasks by ID |
+| "198 refreshes" in a day | the refresh log arrived in two service windows and I saved both copies | de-duplicate by record number: 99; voltage fits unchanged |
+| two all-zero rows in `RLOG` | once the ring wraps, the blob being filled has overwritten the oldest | dump only the valid 11 blobs + the current partial one |
 
 ## Part 4 — What was changed because of it
 
-- **`tools/patch_m5gfx.py`** — a PlatformIO `extra_scripts = pre:` script that re-applies the
-  20 s → 60 s timeout fix to the downloaded M5GFX before every build (the library lives
-  in git-ignored `.pio/libdeps/`). Verified: it re-patched after a deliberate revert, and
-  is idempotent. Every refresh now ends with a proper 152 ms power-off phase.
+- **`tools/patch_m5gfx.py`** — a PlatformIO `extra_scripts = pre:` script that re-applies two
+  changes to the downloaded M5GFX before every build (the library lives in git-ignored
+  `.pio/libdeps/`): the busy timeout **20 s → 60 s**, and the **busy-wait hook** (3f). Both
+  exact-match the original text, are idempotent, and warn loudly if M5GFX changes.
+- **Light sleep** while the panel refreshes (3f).
+- **Every refresh is timed and logged** (`refresh timing [...]` on serial, `RLOG` in NVS,
+  `refresh_ms` in the hourly battery log).
+- Service commands for the investigation: `PMDUMP`, `REDRAW`, `SDDET 0/1`, `TSWEEP`,
+  `TFSWEEP`/`TFRES`, `LS 0/1/?`.
 - **SD card kept out of the board** until the bus disturbance is understood.
-- **Every refresh is timed** (`refresh timing [...]` on serial) — if the panel ever changes
-  back, the log will show when.
-- **Open:** ask M5Stack (draft: `docs/m5gfx-issue-draft.md`); optionally time a refresh
-  under the factory firmware.
+- **Open:** ask M5Stack (draft: `docs/m5gfx-issue-draft.md`) what changed on 7 October and
+  how the controller chooses its program.
 
 ## Files
 
@@ -249,8 +356,15 @@ with the card in under the new firmware) — speculation, not evidence. M5Stack 
 | `tools/photo_prep.py` | crop + resize, driver-mode previews, Floyd–Steinberg, packed `.epd4` + 400×600 `.jpg` |
 | `stages/lesson6_photos.cpp` | dashboard + `PHOTOS`/`SHOW`, photo hold, refresh timing, blinking service LED |
 | `stages/lesson6_colour_refresh_test.cpp` | white / black / six-band refresh timing test |
-| `tools/patch_m5gfx.py` | pre-build fix: M5GFX ED2208 busy timeout 20 s → 60 s |
+| `stages/lesson6_sddet_test.cpp` | + `PMDUMP`, `SDDET`, `REDRAW` (GPIO4 test) |
+| `stages/lesson6_refresh_log.cpp` | + per-refresh log (`RLOG`) |
+| `stages/lesson6_tsweep.cpp` / `lesson6_tfsweep.cpp` | forced-temperature tests, in-wake and per reset |
+| `stages/lesson6_light_sleep.cpp` | + light sleep during refresh (= current `src/main.cpp`) |
+| `tools/patch_m5gfx.py` | pre-build: M5GFX ED2208 busy timeout 20 s → 60 s, busy-wait hook |
 | `docs/data/colour-refresh-test-2026-10-07.log` | the colour-content timing run |
+| `docs/data/pmic-regs-slow-2026-10-07.txt` | power-chip registers in the slow state |
+| `docs/data/refresh-log-2026-10-08/09/10.csv` | per-refresh logs (3c, 3f) |
+| `docs/data/battery-2026-10-09/10.csv` | hourly battery logs of the two battery days (3f) |
 | `images/<name>/` (git-ignored) | `source.png`, `driver_*.png`, `fs*.png`, `compare.png`, `<name>.epd4` |
 
 ```bash
@@ -266,3 +380,9 @@ xdg-open images/<photo>/compare.png    # source | driver quality | driver fast |
   on to its neighbours.
 - **Ordered dithering** — a fixed position-based threshold pattern (e.g. Bayer).
 - **Serpentine scan** — alternate row direction while diffusing.
+- **Waveform / refresh program** — the sequence of voltage pulses that moves the pigments;
+  stored in the panel, chosen by the controller.
+- **Light sleep** — the CPU pauses with RAM kept; it wakes on a pin or timer and carries on
+  (unlike deep sleep, which reboots).
+- **Weak symbol** — a function definition the linker uses only if no other ("strong")
+  definition exists.
