@@ -47,6 +47,8 @@
 #include <sys/time.h>
 #include "nvs.h"            // nvs_get_stats (refresh-log space check)
 #include "soc/gpio_reg.h"   // GPIO_IN_REG for the ISR-safe BUSY read
+#include "driver/gpio.h"    // light-sleep wake on BUSY
+#include "esp_sleep.h"
 #include "board_pins.h"
 #include "Sht40.h"
 
@@ -97,12 +99,48 @@ static void IRAM_ATTR onBusyEdge() {
   }
 }
 
+// ---- light sleep while the panel refreshes (Lesson 06) ----
+// The driver's busy-wait loop calls this hook (tools/patch_m5gfx.py) instead of
+// delay(10). The panel does all the work during its 15-35 s refresh; the ESP32 only
+// waits for BUSY to go HIGH — so on battery it light-sleeps until then (or 1 s, so the
+// driver's 60 s timeout still counts). On USB it keeps the old delay: light sleep
+// would stall the USB serial port, and there's no battery to save.
+static bool     g_lightSleepWait = false;  // decided at boot (battery, or LS 1 test switch)
+static bool     g_usedLightSleep = false;  // any light sleep during the latest refresh
+static uint32_t g_lightSleeps = 0;         // light-sleep entries (diagnostic)
+
+extern "C" void m5gfx_ed2208_busy_wait_hook(int pin) {
+  if (!g_lightSleepWait || pin < 0) { delay(10); return; }
+  gpio_num_t busy = (gpio_num_t)pin;
+  gpio_intr_disable(busy);                       // our CHANGE ISR can't run asleep anyway
+  gpio_wakeup_enable(busy, GPIO_INTR_HIGH_LEVEL);
+  esp_sleep_enable_gpio_wakeup();
+  esp_sleep_enable_timer_wakeup(1000000);        // <= 1 s per nap: timeout still works
+  Serial.flush();
+  esp_light_sleep_start();
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+  gpio_wakeup_disable(busy);
+  gpio_set_intr_type(busy, GPIO_INTR_ANYEDGE);   // back to the timing ISR
+  gpio_intr_enable(busy);
+  g_usedLightSleep = true;
+  ++g_lightSleeps;
+  // The ISR missed the rising edge while we slept: record it here (within ~1 ms).
+  int n = nEdges;
+  if (gpio_get_level(busy) && n > 0 && n < MAX_EDGES && edgeLevel[n - 1] == 0) {
+    edgeUs[n] = micros();
+    edgeLevel[n] = 1;
+    nEdges = n + 1;
+  }
+}
+
 static uint16_t g_lastRefreshMs = 0;   // panel REFRESH phase of the latest refresh
 static uint16_t g_lastTransferMs = 0;  // SPI transfer before BUSY first went LOW
 static uint8_t  g_wakeSrc = 0;         // PMIC WAKE_SRC of this boot (for the refresh log)
 
 static void timedDisplay(const char* what) {
   nEdges = 0;
+  g_usedLightSleep = false;
   uint32_t t0 = micros();
   M5.Display.display();
   M5.Display.waitDisplay();
@@ -123,9 +161,10 @@ static void timedDisplay(const char* what) {
   g_lastRefreshMs = (uint16_t)min<uint32_t>(longest, 65535);
   g_lastTransferMs = (uint16_t)min<uint32_t>(transfer / 1000, 65535);
   Serial.printf("refresh timing [%s]: total %lu ms, transfer %lu ms, busy phases %lu / %lu / %lu ms "
-                "(power-on / REFRESH / power-off)\n", what, (unsigned long)((t1 - t0) / 1000),
+                "(power-on / REFRESH / power-off)%s\n", what, (unsigned long)((t1 - t0) / 1000),
                 (unsigned long)(transfer / 1000), (unsigned long)phase[0],
-                (unsigned long)phase[1], (unsigned long)phase[2]);
+                (unsigned long)phase[1], (unsigned long)phase[2],
+                g_usedLightSleep ? " [light sleep]" : "");
 }
 
 // ---- state that survives ESP32 power-off: <= 32 bytes, in the PMIC ----
@@ -282,7 +321,8 @@ struct __attribute__((packed)) RefreshRec {
   int16_t  temp_cC;
   uint16_t minsSincePrev;
   uint8_t  wakeSrc;      // PMIC WAKE_SRC bits of the boot it happened in
-  uint8_t  flags;        // bit0 USB present, bits1-3 kind (0 dash, 1 photo B, 2 photo A, 3 redraw, 4 empty)
+  uint8_t  flags;        // bit0 USB present, bits1-3 kind (0 dash, 1 photo B, 2 photo A, 3 redraw, 4 empty),
+                         // bit4 the ESP32 light-slept through the refresh
 };
 static_assert(sizeof(RefreshRec) == 16, "keep records 16 bytes");
 static constexpr int RREC_PER_BLOB = 16, RBLOBS = 12;
@@ -300,7 +340,7 @@ static void logRefresh(uint8_t kind) {
                    (uint16_t)M5.Power.getBatteryVoltage(),
                    (int16_t)(isnan(curT) ? 0 : lroundf(curT * 100)),
                    (uint16_t)(prevT && now > prevT ? min<uint32_t>((now - prevT) / 60, 65535) : 65535),
-                   g_wakeSrc, (uint8_t)((src & 1) | (kind << 1)) };
+                   g_wakeSrc, (uint8_t)((src & 1) | (kind << 1) | (g_usedLightSleep ? 0x10 : 0)) };
   char key[8];
   uint32_t blob = (n / RREC_PER_BLOB) % RBLOBS, slot = n % RREC_PER_BLOB;
   snprintf(key, sizeof key, "r%u", (unsigned)blob);
@@ -318,9 +358,11 @@ static void dumpRefreshLog() {
   Preferences rl;
   rl.begin("rlog", true);
   uint32_t n = rl.getUInt("n", 0);
-  uint32_t kept = min<uint32_t>(n, RREC_PER_BLOB * RBLOBS);
+  // The blob being filled has already overwritten the oldest one, so once the ring has
+  // wrapped only (RBLOBS - 1) full blobs + the current partial one are valid.
+  uint32_t kept = min<uint32_t>(n, (RBLOBS - 1) * RREC_PER_BLOB + n % RREC_PER_BLOB);
   Serial.println("# refresh log");
-  Serial.println("n,utc_epoch,local,refresh_ms,transfer_ms,batt_mV,temp_c,mins_since_prev,wake_src,usb,kind");
+  Serial.println("n,utc_epoch,local,refresh_ms,transfer_ms,batt_mV,temp_c,mins_since_prev,wake_src,usb,kind,light_sleep");
   RefreshRec buf[RREC_PER_BLOB];
   int loaded = -1;
   for (uint32_t i = n - kept; i < n; ++i) {
@@ -335,10 +377,10 @@ static void dumpRefreshLog() {
     time_t t = r.t;
     struct tm lt;  localtime_r(&t, &lt);
     char loc[24];  strftime(loc, sizeof loc, "%Y-%m-%d %H:%M:%S", &lt);
-    Serial.printf("%lu,%lu,%s,%u,%u,%u,%.2f,%u,0x%02X,%u,%s\n", (unsigned long)i + 1,
+    Serial.printf("%lu,%lu,%s,%u,%u,%u,%.2f,%u,0x%02X,%u,%s,%u\n", (unsigned long)i + 1,
                   (unsigned long)r.t, loc, r.refreshMs, r.transferMs, r.batt_mV,
                   r.temp_cC / 100.0f, r.minsSincePrev, r.wakeSrc, r.flags & 1,
-                  KIND[(r.flags >> 1) & 7]);
+                  KIND[(r.flags >> 1) & 7], (r.flags >> 4) & 1);
   }
   rl.end();
   nvs_stats_t st;
@@ -676,7 +718,7 @@ static void sdDetEn(bool on) {
 // temperature: CCSET 0xE0 bit1 (TSFIX) = use TSSET 0xE5 (signed degC) instead of the
 // internal sensor. M5GFX never sends these, so the controller uses its own sensor.
 // The setting lasts until the controller loses power (every standby power-off).
-static constexpr int PIN_EPD_CS = 44;   // from M5GFX's PaperColor panel config
+static constexpr int PIN_EPD_CS = 44;   // from M5GFX's PaperColor board setup
 static void epdCmd(uint8_t cmd, int data = -1) {
   auto bus = M5.Display.getPanel()->getBus();
   bus->beginTransaction();
@@ -772,6 +814,17 @@ static void serialWindow(uint32_t ms) {
         else if (line == "PMDUMP") pmDump();
         else if (line == "RLOG") dumpRefreshLog();
         else if (line == "TSWEEP") tempSweep();
+        else if (line == "LS 1" || line == "LS 0" || line == "LS?") {
+          Preferences p; p.begin("ls", false);
+          if (line != "LS?") {
+            p.putBool("force", line == "LS 1");
+            if (line == "LS 1") g_lightSleepWait = true;   // test now, not just from next boot
+          }
+          Serial.printf("light-sleep wait: force %s; this boot %s, %lu naps so far\n",
+                        p.getBool("force", false) ? "ON" : "off", g_lightSleepWait ? "ON" : "off",
+                        (unsigned long)g_lightSleeps);
+          p.end();
+        }
         else if (line == "TFSWEEP") {             // start the per-reset sweep
           Preferences p; p.begin("tfs", false); p.clear(); p.putInt("i", 0); p.end();
           Serial.println("tfsweep: starting, one restart per step");
@@ -929,8 +982,10 @@ void setup() {
     int i = p.isKey("i") ? p.getInt("i", -1) : -1;
     p.end();
     if (i >= 0) {          // sweep step: hardware-reset the panel controller first
-      pinMode(43, OUTPUT); digitalWrite(43, LOW); delay(20);
-      digitalWrite(43, HIGH); delay(50);
+      // (was G43 = DC by mistake; with clear_display = false M5GFX never pulses G12 itself)
+      pinMode(PIN_EPD_RST, OUTPUT); digitalWrite(PIN_EPD_RST, LOW); delay(20);
+      digitalWrite(PIN_EPD_RST, HIGH); delay(50);
+      Serial.printf("tfsweep: panel reset pulsed on G%u\n", PIN_EPD_RST);
     }
   }
   auto cfg = M5.config();
@@ -944,6 +999,14 @@ void setup() {
   M5.Display.setEpdMode(epd_mode_t::epd_fastest);
   M5.Led.setBrightness(40);
   tforceStep();            // no-op unless a TFSWEEP is in progress
+  {
+    uint8_t pwr = 0;
+    pmRead(0x04, &pwr, 1);                       // PWR_SRC bit0 = 5 V in (USB)
+    Preferences p; p.begin("ls", true);
+    bool force = p.isKey("force") && p.getBool("force", false);
+    p.end();
+    g_lightSleepWait = !(pwr & 1) || force;      // battery only, unless forced for a test
+  }
 
   // Why are we running? A PMIC power-on (timer / button / USB) shows up as a
   // POWERON reset; anything else (reset after flashing, crash) is a dev boot.

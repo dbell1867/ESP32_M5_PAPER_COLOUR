@@ -10,6 +10,9 @@ constexpr uint8_t PIN_SPK_EN       = 46;  // AW8737A speaker amplifier enable
 
 // E-paper BUSY: LOW while the panel is working. M5GFX owns it; we only LISTEN.
 constexpr uint8_t PIN_EPD_BUSY = 11;
+// Panel reset: G12 (M5GFX board setup, _pin_reset). NOT G43 — that is the bus DC pin,
+// although M5GFX's panel config says pin_rst = 43 (unused). Lesson 06 3d.
+constexpr uint8_t PIN_EPD_RST  = 12;
 
 // microSD — shares the e-paper's SPI2 (FSPI) bus; power comes from the PMIC
 // (M5GFX switches it on during M5.begin()).
