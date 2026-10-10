@@ -27,13 +27,17 @@ refreshing (visible on BUSY as a missing power-off phase).
   several hundred logged refreshes, under unchanged firmware, on USB or on battery.
 - **Fixed within a power-up:** every refresh between two power-offs of the panel (our
   firmware powers the board down between wakes via the M5PM1) has the same duration, to
-  ±5 ms. A hardware reset (RST G43) does not change it; a full power cycle can.
+  ±5 ms, including across ESP32 restarts that re-send the init sequence; a full power
+  cycle can change it.
 - **Temperature shifts it now:** a cooling to ~10 °C stepped 14.2 → 25.0 → 26.6 s and back.
   But the same temperature (~21 °C) has also given 14.2, 26.7 and 35.3 s.
 - **Content doesn't matter:** all-white, all-black and six solid ink bands measure the same.
-- **Forcing a temperature has no effect:** `0xE0 = 0x02` then `0xE5 = <°C>` (the UC81xx
-  CCSET/TSSET pair), sent before the first refresh after a reset, for 0, 12, 25 and 40 °C →
-  identical REFRESH time.
+- **Forcing a temperature has no effect on a running controller:** `0xE0 = 0x02` then
+  `0xE5 = <°C>` (the UC81xx CCSET/TSSET pair), sent after the init sequence and before the
+  next refresh, for 0–40 °C → identical REFRESH time. (Not yet tried right after an RST pulse.)
+- Minor: the PaperColor panel config sets `cfg.pin_rst = GPIO_NUM_43`, but G43 is the bus
+  DC pin and the real reset is G12 (`_pin_reset(GPIO_NUM_12, ...)`). Harmless today because
+  the driver calls `init(false)`, but misleading.
 - With a microSD card inserted, the 120 KB transfer slows from 241 ms to 639 ms and the BUSY
   pin shows glitch edges (separate issue; the change on 7 Oct coincided with the first boot
   with a card inserted under new firmware — possibly unrelated).

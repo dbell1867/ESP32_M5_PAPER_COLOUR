@@ -264,11 +264,18 @@ the bus, so a sketch can send them itself.
 | Test | When the temperature was sent | Result |
 |---|---|---|
 | `TSWEEP` | in one wake, before each of 9 redraws: internal, 25, 21, 18, 12, 5, 30, 40 °C, internal | **35.3 s every time** (±5 ms) |
-| `TFSWEEP` | before the **first** refresh after a hardware reset of the controller (RST G43), one restart per step: internal, 25, 12, 40, 0 °C, internal | **26.7 s every time** (±5 ms) |
+| `TFSWEEP` | one ESP32 restart per step, sent right after M5GFX's init sequence and before that boot's first refresh: internal, 25, 12, 40, 0 °C, internal | **26.7 s every time** (±5 ms) |
 
-The ED2208 **ignores** these commands (or uses them for something else). Six hardware
-resets in a row also kept the same program — so the choice is made at **power-up**, not at
-reset, and we can't steer it from outside.
+**Correction — the controller was never reset in TFSWEEP.** I pulsed G43 as "reset", taking
+it from M5GFX's panel config (`cfg.pin_rst = 43`, unused because the driver calls
+`init(false)`). M5GFX's board setup shows the truth: **G43 is DC, the reset is G12** — and
+with `clear_display = false`, M5Unified calls `init_without_reset()`, so G12 is never pulsed
+either. The controller stayed powered and un-reset through all six steps.
+
+What the two tests do show: **within a running controller**, a forced temperature has no
+effect, and the program doesn't change. What they don't show: whether the controller
+would honour a forced temperature sent after a real reset (G12) and before its first
+power-on. Untested.
 
 ### 3e. Putting it together — and a correction
 
@@ -281,8 +288,8 @@ sequences). **Checking it against older data killed it.** Lesson 03's fridge tes
 What the evidence supports:
 
 1. **Before 7 Oct ~13:56:** one program, ~14.4 s, at every temperature tested (8–24 °C).
-2. **Since then:** a choice among several programs, made at each **power-up** and fixed until
-   the next one; temperature shifts the choice, but the same temperature can give
+2. **Since then:** a choice among several programs, fixed for as long as the controller
+   stays powered (a full standby power-off can change it); temperature shifts the choice, but the same temperature can give
    different programs.
 3. **Something about the panel changed at 13:56 on 7 October**, and it persists across
    firmware, resets and power cycles.
@@ -332,6 +339,7 @@ often — deliberately not done (enough battery work for this board).
 | upload failed: "Unable to verify flash chip connection"; a garbled serial line | my earlier 8-minute `follow_serial.py` was still reading the port (G66) | wait for or stop helpers before uploading |
 | a wait loop that never ended | `pgrep -f 'follow_serial…'` matched its **own** command line (G66) | stop tasks by ID |
 | "198 refreshes" in a day | the refresh log arrived in two service windows and I saved both copies | de-duplicate by record number: 99; voltage fits unchanged |
+| "six hardware resets kept the same program" — claimed in the first write-up | the "reset" pulse went to G43 = DC; the real reset G12 is never pulsed with `clear_display = false` | corrected in 3d; reset test still open |
 | two all-zero rows in `RLOG` | once the ring wraps, the blob being filled has overwritten the oldest | dump only the valid 11 blobs + the current partial one |
 
 ## Part 4 — What was changed because of it
@@ -344,7 +352,7 @@ often — deliberately not done (enough battery work for this board).
 - **Every refresh is timed and logged** (`refresh timing [...]` on serial, `RLOG` in NVS,
   `refresh_ms` in the hourly battery log).
 - Service commands for the investigation: `PMDUMP`, `REDRAW`, `SDDET 0/1`, `TSWEEP`,
-  `TFSWEEP`/`TFRES`, `LS 0/1/?`.
+  `TFSWEEP`/`TFRES` (note: pulses the wrong pin — G43 is DC; see 3d), `LS 0/1/?`.
 - **SD card kept out of the board** until the bus disturbance is understood.
 - **Open:** ask M5Stack (draft: `docs/m5gfx-issue-draft.md`) what changed on 7 October and
   how the controller chooses its program.
@@ -358,7 +366,7 @@ often — deliberately not done (enough battery work for this board).
 | `stages/lesson6_colour_refresh_test.cpp` | white / black / six-band refresh timing test |
 | `stages/lesson6_sddet_test.cpp` | + `PMDUMP`, `SDDET`, `REDRAW` (GPIO4 test) |
 | `stages/lesson6_refresh_log.cpp` | + per-refresh log (`RLOG`) |
-| `stages/lesson6_tsweep.cpp` / `lesson6_tfsweep.cpp` | forced-temperature tests, in-wake and per reset |
+| `stages/lesson6_tsweep.cpp` / `lesson6_tfsweep.cpp` | forced-temperature tests, in-wake and per ESP32 restart |
 | `stages/lesson6_light_sleep.cpp` | + light sleep during refresh (= current `src/main.cpp`) |
 | `tools/patch_m5gfx.py` | pre-build: M5GFX ED2208 busy timeout 20 s → 60 s, busy-wait hook |
 | `docs/data/colour-refresh-test-2026-10-07.log` | the colour-content timing run |
