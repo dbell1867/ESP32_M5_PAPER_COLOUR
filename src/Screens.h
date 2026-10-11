@@ -22,6 +22,10 @@ struct DashInfo {
 
 void drawDashboard(const DashInfo& d);
 
+// The Wi-Fi page: "Scan to join" + the network name + a QR code of `qrText`
+// ("WIFI:T:WPA;S:...;P:...;;"). The text contains the password: never log or screenshot it.
+void drawWifiQr(const char* ssid, const char* qrText);
+
 // Rough state of charge from the resting voltage: a typical single-cell LiPo curve,
 // 3.30 V (our "empty" shutdown) = 0 %, 4.20 V = 100 %. Approximate by nature.
 int batteryPercent(float v);

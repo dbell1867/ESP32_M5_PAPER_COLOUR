@@ -266,3 +266,19 @@ void drawDashboard(const DashInfo& d) {
   snprintf(buf, sizeof buf, "%d%%", pct);
   D.drawString(buf, W - 16 - 54 - 6, 570);
 }
+
+void drawWifiQr(const char* ssid, const char* qrText) {
+  D.fillScreen(INK_WHITE);
+  D.setTextSize(1);
+  D.setTextColor(INK_BLACK);
+  D.setTextDatum(top_center);
+  D.setFont(&fonts::FreeSansBold18pt7b);
+  D.drawString("Wi-Fi", W / 2, 22);
+  D.setFont(&fonts::FreeSans12pt7b);
+  D.drawString("Scan with your phone's camera", W / 2, 70);
+  D.qrcode(qrText, 20, 110, W - 40, 1, true);     // 360 px, white quiet zone included
+  D.setFont(&fonts::FreeSansBold12pt7b);
+  D.drawString(ssid, W / 2, 490);
+  D.setFont(&fonts::FreeSans9pt7b);
+  D.drawString("press the power button for the next page", W / 2, 560);
+}

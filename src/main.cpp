@@ -289,7 +289,7 @@ static void logRefresh(uint8_t kind) {
 }
 
 static void dumpRefreshLog() {
-  static const char* KIND[] = { "dash", "photoB", "photoA", "redraw", "empty", "?", "?", "?" };
+  static const char* KIND[] = { "dash", "photoB", "photoA", "redraw", "empty", "qr", "?", "?" };
   Preferences rl;
   rl.begin("rlog", true);
   uint32_t n = rl.getUInt("n", 0);
@@ -748,7 +748,6 @@ static bool showPhoto(const String& name, bool routeA) {
   Serial.printf("photo: %s from %s shown via route %c (load %lu ms, refresh %lu ms)\n",
                 path.c_str(), where, routeA ? 'A' : 'B', (unsigned long)(t1 - t0),
                 (unsigned long)(millis() - t1));
-  prefs.putUChar("hold", 1);           // photo-frame mode until the power button
   return true;
 }
 
@@ -885,6 +884,77 @@ static void resetPanel() {
   M5.Display.wakeup();     // Panel_ED2208::setSleep(false) -> _init_sequence()
 }
 
+// ---- pages (Lesson 08): the power button steps Dashboard -> Wi-Fi QR -> photos -> ...
+// Stored in NVS "dash"/"page": 0 = dashboard, 1 = Wi-Fi QR, 2+i = i-th photo in flash
+// (alphabetical), PAGE_MANUAL = a photo put up with SHOW. Non-dashboard pages stay up
+// (no scheduled redraws) until the next press; low battery returns to the dashboard.
+static constexpr uint8_t PAGE_DASH = 0, PAGE_QR = 1, PAGE_PHOTO0 = 2, PAGE_MANUAL = 255;
+
+static int flashPhotos(String* names, int max) {   // "/photos/*.epd4" in flash, sorted
+  int n = 0;
+  if (!LittleFS.begin(false, "/littlefs", 5, "spiffs")) return 0;
+  File dir = LittleFS.open("/photos");
+  for (File e = dir ? dir.openNextFile() : File(); e && n < max; e = dir.openNextFile()) {
+    String f = e.name();
+    if (f.endsWith(".epd4")) names[n++] = f.substring(0, f.length() - 5);
+  }
+  dir.close();
+  LittleFS.end();
+  for (int i = 1; i < n; ++i)                        // insertion sort: a handful of names
+    for (int j = i; j > 0 && names[j] < names[j - 1]; --j) std::swap(names[j], names[j - 1]);
+  return n;
+}
+
+// Escape per the Wi-Fi QR convention: \ ; , : " get a backslash.
+static String qrEscape(const String& v) {
+  String o;
+  for (char c : v) { if (strchr("\\;,:\"", c)) o += '\\'; o += c; }
+  return o;
+}
+
+// Builds the "WIFI:..." text from the stored credentials. NEVER print the result.
+static bool wifiQrText(String& ssid, String& text) {
+  Preferences w;
+  w.begin("wifi", true);
+  ssid = w.isKey("ssid") ? w.getString("ssid") : "";
+  String pass = w.isKey("pass") ? w.getString("pass") : "";
+  w.end();
+  if (!ssid.length()) return false;
+  text = "WIFI:T:" + String(pass.length() ? "WPA" : "nopass") + ";S:" + qrEscape(ssid) + ";";
+  if (pass.length()) text += "P:" + qrEscape(pass) + ";";
+  text += ";";
+  return true;
+}
+
+// The page after `cur`: dashboard -> QR (if Wi-Fi is set up) -> each photo -> dashboard.
+static uint8_t nextPage(uint8_t cur, int nPhotos, bool haveWifi) {
+  if (cur == PAGE_MANUAL) return PAGE_DASH;
+  for (int p = cur + 1; p < PAGE_PHOTO0 + nPhotos; ++p) {
+    if (p == PAGE_QR && !haveWifi) continue;
+    return (uint8_t)p;
+  }
+  return PAGE_DASH;
+}
+
+// Draw a non-dashboard page and refresh the panel. Returns false if it couldn't.
+static bool showPage(uint8_t page, const String* photos, int nPhotos) {
+  if (page == PAGE_QR) {
+    String ssid, text;
+    if (!wifiQrText(ssid, text)) return false;
+    drawWifiQr(ssid.c_str(), text.c_str());
+    text = "";                                       // don't keep it around
+    M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+    timedDisplay("wifi qr");
+    logRefresh(5);
+    Serial.println("page: Wi-Fi QR");
+    return true;
+  }
+  int i = page - PAGE_PHOTO0;
+  if (i < 0 || i >= nPhotos) return false;
+  Serial.printf("page: photo %d of %d (%s)\n", i + 1, nPhotos, photos[i].c_str());
+  return showPhoto(photos[i], false);
+}
+
 // SHOT (Lesson 08): draw the dashboard into the frame buffer WITHOUT refreshing the
 // panel, and send it as hex RGB rows; tools/screenshot.py turns it into a PNG. Layout
 // changes can be reviewed on the computer instead of waiting 14-25 s per try.
@@ -973,7 +1043,7 @@ static void serialWindow(uint32_t ms) {
           arg.trim();
           bool routeA = arg.endsWith(" A");
           if (routeA) arg = arg.substring(0, arg.length() - 2);
-          showPhoto(arg, routeA);
+          if (showPhoto(arg, routeA)) prefs.putUChar("page", PAGE_MANUAL);   // held until a press
         }
         else if (line == "SYNCDUE") {                         // test hook: make it due now
           Preferences sp;
@@ -1251,15 +1321,29 @@ void setup() {
     st.lastBattLogAt = (uint32_t)now;
   }
 
-  // Photo-frame hold (Lesson 06): a photo stays up — no dashboard refreshes — until
-  // the power button. Low battery always wins: its warnings matter more.
-  bool hold = prefs.isKey("hold") && prefs.getUChar("hold") == 1;
-  if (hold && (serviceWake || lowBatt)) { prefs.putUChar("hold", 0); hold = false; }
+  // Pages (Lesson 08): a power-button press steps to the next page; a non-dashboard
+  // page stays up (no scheduled redraws) until the next press. Low battery always
+  // returns to the dashboard: its warnings matter more. A USB plug-in doesn't step.
+  uint8_t page = prefs.isKey("page") ? prefs.getUChar("page") : PAGE_DASH;
+  bool pressed = pmicPowerOn && (wake & WAKE_PWRBTN);
+  if (fresh || lowBatt) page = PAGE_DASH;
+  if (pressed && !lowBatt) {
+    static String photos[24];
+    int nPhotos = flashPhotos(photos, 24);
+    String s1, s2;
+    bool haveWifi = wifiQrText(s1, s2);
+    s2 = "";
+    uint8_t want = nextPage(page, nPhotos, haveWifi);
+    if (want != PAGE_DASH && !showPage(want, photos, nPhotos)) want = PAGE_DASH;
+    page = want;
+  }
+  prefs.putUChar("page", page);
 
   char why = 0;
   if (fresh)                                                       why = 'B';
-  else if (serviceWake)                                            why = 'P';
-  else if (hold)                                                   why = 0;   // keep the photo
+  else if (pressed)                                                why = page == PAGE_DASH ? 'P' : 0;
+  else if (page != PAGE_DASH)                                      why = 0;   // keep the page
+  else if (serviceWake)                                            why = 'P'; // plug-in
   else if (now - (time_t)st.lastRefreshAt >=
            (time_t)(lowBatt ? REFRESH_EVERY_LOW_S : REFRESH_EVERY_S)) why = 'S';
   else if (!lowBatt && (st.shownT_cC == INT16_MIN ||                // no early refreshes
@@ -1285,7 +1369,7 @@ void setup() {
   if (fresh && !pmicPowerOn) {
     Serial.println("dev boot: flash window; send LOG to dump");
     serialWindow(FLASH_WINDOW_MS);
-  } else if (serviceWake) {
+  } else if (serviceWake && onUsb) {     // the window is for the tools: USB only
     M5.Led.setColor(0, 0, 0, 255);  M5.Led.display();
     Serial.println("power-button/USB wake: 30 s service window; send LOG to dump");
     serialWindow(SERVICE_MS);
