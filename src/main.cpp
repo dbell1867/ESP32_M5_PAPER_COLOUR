@@ -53,6 +53,7 @@
 #include "board_pins.h"
 #include "Sht40.h"
 #include "Weather.h"
+#include "Screens.h"
 
 static constexpr const char* TZ_LONDON = "GMT0BST,M3.5.0/1,M10.5.0";
 static constexpr uint32_t WAKE_EVERY_S     = 120;
@@ -68,8 +69,7 @@ static constexpr float    EMPTY_V             = 3.30f;  // shut down while there
 static constexpr uint8_t  STREAK              = 2;      // consecutive wakes to confirm
 static constexpr uint32_t REFRESH_EVERY_LOW_S = 1800;   // low battery: every 30 min
 
-static constexpr uint32_t INK_BLACK = 0x000000, INK_WHITE = 0xFFFFFF;
-static constexpr uint32_t INK_RED   = 0xBF0000, INK_BLUE  = 0x6440FF;
+// (the six inks, INK_*, now live in Screens.h)
 
 // M5PM1 registers (datasheet; sequence copied from M5Stack's M5PM1 library)
 static constexpr uint8_t PM_PWR_SRC  = 0x04;  // bit0 = 5VIN (USB) valid
@@ -200,88 +200,21 @@ static bool pmWrite(uint8_t reg, const uint8_t* buf, size_t n) {
   return M5.Power.M5pm1.writeRegister(reg, buf, n);
 }
 
+static bool wxLoad(WxData& d);   // weather store, further down
+
+// The dashboard (Lesson 08 layout, drawn by Screens.cpp): gather, then draw.
 static void drawScreen(float battV, bool lowBatt) {
-  const int W = M5.Display.width();
-  static const char* DAYS[] = { "Sunday", "Monday", "Tuesday", "Wednesday",
-                                "Thursday", "Friday", "Saturday" };
-  static const char* MONTHS[] = { "January", "February", "March", "April", "May",
-                                  "June", "July", "August", "September",
-                                  "October", "November", "December" };
-  time_t now = time(nullptr);
-  struct tm lt;
-  localtime_r(&now, &lt);
-  char buf[64];
-  float minT = st.minT_cC / 100.0f, maxT = st.maxT_cC / 100.0f;
-
-  M5.Display.fillScreen(INK_WHITE);
-  M5.Display.setTextColor(INK_BLACK);
-  M5.Display.setTextSize(1);   // never inherit a size from earlier drawing (TFSWEEP bug)
-  M5.Display.setFont(&fonts::FreeSansBold18pt7b);
-  M5.Display.setTextDatum(top_center);
-  snprintf(buf, sizeof buf, "%s %d %s", DAYS[lt.tm_wday], lt.tm_mday, MONTHS[lt.tm_mon]);
-  M5.Display.drawString(buf, W / 2, 24);
-
-  const int bx = 20, by = 80, bw = W - 40, bh = 300;
-  M5.Display.drawRoundRect(bx, by, bw, bh, 18, INK_BLACK);
-  M5.Display.drawRoundRect(bx + 1, by + 1, bw - 2, bh - 2, 17, INK_BLACK);
-  uint32_t tInk = curT < 18 ? INK_BLUE : (curT > 25 ? INK_RED : INK_BLACK);
-
-  M5.Display.setFont(&fonts::FreeSansBold24pt7b);
-  M5.Display.setTextSize(2);
-  M5.Display.setTextColor(tInk);
-  M5.Display.setTextDatum(top_left);
-  snprintf(buf, sizeof buf, "%.1f", curT);
-  const int tw = M5.Display.textWidth(buf), cw = M5.Display.textWidth("C");
-  const int degR = 9, gap = 6;
-  const int x0 = (W - (tw + gap + 2 * degR + gap + cw)) / 2, y0 = by + 50;
-  M5.Display.drawString(buf, x0, y0);
-  M5.Display.fillCircle(x0 + tw + gap + degR, y0 + 8 + degR, degR, tInk);
-  M5.Display.fillCircle(x0 + tw + gap + degR, y0 + 8 + degR, degR / 2, INK_WHITE);
-  M5.Display.drawString("C", x0 + tw + gap + 2 * degR + gap, y0);
-  M5.Display.setTextSize(1);
-
-  M5.Display.setTextColor(INK_BLACK);
-  M5.Display.setTextDatum(top_center);
-  snprintf(buf, sizeof buf, "%.0f %% RH", curRH);
-  M5.Display.drawString(buf, W / 2, by + 190);
-
-  M5.Display.setFont(&fonts::FreeSans12pt7b);
-  snprintf(buf, sizeof buf, "min %.1f  -  max %.1f", minT, maxT);
-  M5.Display.drawString(buf, W / 2, by + bh + 22);
-
-  M5.Display.setFont(&fonts::FreeSansBold12pt7b);
-  strftime(buf, sizeof buf, "Updated %H:%M %Z", &lt);
-  M5.Display.drawString(buf, W / 2, by + bh + 64);
-
-  M5.Display.setFont(&fonts::FreeSans9pt7b);
-  Preferences sp;                             // last NTP sync (Lesson 05)
-  sp.begin("sync", true);
-  uint32_t lastSync = sp.isKey("last") ? sp.getUInt("last") : 0;
-  sp.end();
-  char synced[24];
-  if (!lastSync) snprintf(synced, sizeof synced, "not synced");
-  else {
-    long h = (now - (time_t)lastSync) / 3600;
-    if (h < 1) snprintf(synced, sizeof synced, "synced <1 h ago");
-    else if (h < 48) snprintf(synced, sizeof synced, "synced %ld h ago", h);
-    else snprintf(synced, sizeof synced, "synced %ld d ago", h / 24);
-  }
-  snprintf(buf, sizeof buf, "batt %.2f V  -  up %.1f d  -  %s",
-           battV, (now - st.bootAt) / 86400.0f, synced);
-  M5.Display.drawString(buf, W / 2, by + bh + 104);
-  snprintf(buf, sizeof buf, "wake #%lu - refresh #%lu - %u ms - arm r%u f%u",
-           (unsigned long)st.wakes, (unsigned long)st.refreshes + 1, st.lastAwakeMs,
-           st.armRetries, st.fallbacks);
-  M5.Display.drawString(buf, W / 2, by + bh + 128);
-
-  if (lowBatt) {                              // red banner across the bottom
-    const int H = M5.Display.height();
-    M5.Display.fillRect(0, H - 52, W, 52, INK_RED);
-    M5.Display.setFont(&fonts::FreeSansBold12pt7b);
-    M5.Display.setTextColor(INK_WHITE);
-    M5.Display.setTextDatum(middle_center);
-    M5.Display.drawString("LOW BATTERY - please charge", W / 2, H - 26);
-  }
+  DashInfo d = {};
+  d.now = time(nullptr);
+  d.roomC = curT;
+  d.roomRH = curRH;
+  d.battV = battV;
+  uint8_t src = 0;
+  pmRead(PM_PWR_SRC, &src, 1);
+  d.usb = src & 1;
+  d.lowBatt = lowBatt;
+  d.haveWx = wxLoad(d.wx);
+  drawDashboard(d);
 }
 
 // Shown ONCE when the battery is empty; e-paper then keeps it at zero power.
@@ -595,7 +528,7 @@ static bool ntpSync() {
 // Location: "lat"/"lon" floats, set with `LOC <lat> <lon>` (city level is plenty) — kept on
 // the board, not in git. Data: blob "d" (WxData). "try": last attempt, for the retry gap.
 static bool wxLoad(WxData& d) {
-  Preferences x;
+  Preferences x;  // (declared above drawScreen)
   x.begin("wx", true);
   bool ok = x.isKey("d") && x.getBytes("d", &d, sizeof d) == sizeof d;
   x.end();
@@ -952,6 +885,28 @@ static void resetPanel() {
   M5.Display.wakeup();     // Panel_ED2208::setSleep(false) -> _init_sequence()
 }
 
+// SHOT (Lesson 08): draw the dashboard into the frame buffer WITHOUT refreshing the
+// panel, and send it as hex RGB rows; tools/screenshot.py turns it into a PNG. Layout
+// changes can be reviewed on the computer instead of waiting 14-25 s per try.
+static void shotDashboard() {
+  drawScreen(M5.Power.getBatteryVoltage() / 1000.0f, false);
+  const int W = M5.Display.width(), H = M5.Display.height();
+  static uint8_t rgb[400 * 3];
+  static char hex[400 * 6 + 1];
+  static const char* HX = "0123456789ABCDEF";
+  Serial.setTxTimeoutMs(1000);      // WAIT for the host while dumping (normally 0, G11)
+  Serial.printf("# SHOT BEGIN %d %d\n", W, H);
+  for (int y = 0; y < H; ++y) {
+    M5.Display.readRectRGB(0, y, W, 1, rgb);
+    for (int i = 0; i < W * 3; ++i) { hex[2 * i] = HX[rgb[i] >> 4]; hex[2 * i + 1] = HX[rgb[i] & 15]; }
+    hex[W * 6] = 0;
+    Serial.println(hex);
+  }
+  Serial.println("# SHOT END");
+  Serial.flush();
+  Serial.setTxTimeoutMs(0);
+}
+
 static void serialWindow(uint32_t ms) {
   uint32_t t0 = millis();
   String line;
@@ -970,6 +925,7 @@ static void serialWindow(uint32_t ms) {
         else if (line == "SYNCLOG") dumpSyncLog();
         else if (line == "PHOTOS") listPhotos();
         else if (line == "WEATHER") wxPrint();
+        else if (line == "SHOT") shotDashboard();
         else if (line == "WXNOW") {                           // fetch the weather now
           uint16_t cm; int8_t rs;
           if (wifiUp(cm, rs)) { wxFetchOnline(); wifiDown(); }

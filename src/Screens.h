@@ -1,0 +1,27 @@
+// What the panel shows (Lesson 08). Drawing only — no sensors, NVS or Wi-Fi in here:
+// main.cpp gathers everything into a DashInfo and calls drawDashboard().
+#pragma once
+#include <Arduino.h>
+#include <time.h>
+#include "Weather.h"
+
+// The panel's six inks, EXACT (Lesson 02): anything else gets dithered or mapped.
+static constexpr uint32_t INK_BLACK  = 0x000000, INK_WHITE = 0xFFFFFF;
+static constexpr uint32_t INK_RED    = 0xBF0000, INK_BLUE  = 0x6440FF;
+static constexpr uint32_t INK_YELLOW = 0xFFF338, INK_GREEN = 0x438A1C;
+
+struct DashInfo {
+  time_t now;            // for the date and "Updated hh:mm"
+  float  roomC, roomRH;  // SHT40 (NAN if the read failed)
+  float  battV;
+  bool   usb;            // 5 V present (charging)
+  bool   lowBatt;        // red banner
+  bool   haveWx;
+  WxData wx;
+};
+
+void drawDashboard(const DashInfo& d);
+
+// Rough state of charge from the resting voltage: a typical single-cell LiPo curve,
+// 3.30 V (our "empty" shutdown) = 0 %, 4.20 V = 100 %. Approximate by nature.
+int batteryPercent(float v);
