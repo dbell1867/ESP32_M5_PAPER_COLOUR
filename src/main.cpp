@@ -52,6 +52,7 @@
 #include "esp_sleep.h"
 #include "board_pins.h"
 #include "Sht40.h"
+#include "Weather.h"
 
 static constexpr const char* TZ_LONDON = "GMT0BST,M3.5.0/1,M10.5.0";
 static constexpr uint32_t WAKE_EVERY_S     = 120;
@@ -486,16 +487,40 @@ static const char* wifiStatusName(wl_status_t s) {
   }
 }
 
-// Connect, fetch network time, MEASURE how far the RTC had drifted, correct the
-// RTC on a second boundary, radio off. Returns true on success; prints each stage.
-static bool ntpSync() {
+// Wi-Fi up with the stored credentials (Lesson 05). One connection now serves both the
+// time sync and the weather (Lesson 08). On failure the radio is already off again.
+static bool wifiUp(uint16_t& connectMs, int8_t& rssi) {
   Preferences w;
   w.begin("wifi", true);
   String ssid = w.isKey("ssid") ? w.getString("ssid") : "";
   String pass = w.isKey("pass") ? w.getString("pass") : "";
   w.end();
-  if (!ssid.length()) { Serial.println("sync: no Wi-Fi credentials stored"); return false; }
+  if (!ssid.length()) { Serial.println("wifi: no credentials stored"); return false; }
+  uint32_t t0 = millis();
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid.c_str(), pass.c_str());
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) delay(50);
+  connectMs = millis() - t0;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.printf("wifi: \"%s\" failed after %u ms: %s\n", ssid.c_str(), connectMs,
+                  wifiStatusName(WiFi.status()));
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    return false;
+  }
+  rssi = WiFi.RSSI();
+  Serial.printf("wifi: connected to \"%s\" in %u ms (%d dBm)\n", ssid.c_str(), connectMs, rssi);
+  return true;
+}
 
+static void wifiDown() {
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);                        // radio off: it's the hungriest thing here
+}
+
+// With Wi-Fi up: fetch network time, MEASURE how far the RTC had drifted, correct the
+// RTC on a second boundary. Returns true on success; prints each stage.
+static bool ntpSyncOnline(uint16_t connectMs, int8_t rssi) {
   // 1. Align the system clock to the RTC's next second tick and remember a
   //    microsecond timestamp, so "what the RTC says now" is known to ~1 ms.
   int s0 = M5.Rtc.getTime().seconds;
@@ -505,23 +530,7 @@ static bool ntpSync() {
   time_t  rtcBase  = time(nullptr);
   int64_t monoBase = esp_timer_get_time();
 
-  // 2. Connect.
-  uint32_t t0 = millis();
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid.c_str(), pass.c_str());
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) delay(50);
-  uint16_t connectMs = millis() - t0;
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.printf("sync: Wi-Fi \"%s\" failed after %u ms: %s\n", ssid.c_str(), connectMs,
-                  wifiStatusName(WiFi.status()));
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-    return false;
-  }
-  int8_t rssi = WiFi.RSSI();
-  Serial.printf("sync: connected to \"%s\" in %u ms (%d dBm)\n", ssid.c_str(), connectMs, rssi);
-
-  // 3. SNTP.
+  // 2. SNTP (the connection is already up).
   uint32_t t1 = millis();
   sntpDone = false;
   sntp_set_time_sync_notification_cb(onSntpSync);
@@ -554,8 +563,6 @@ static bool ntpSync() {
     Serial.printf("sync: no NTP answer within %u ms\n", sntpMs);
   }
   esp_sntp_stop();
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);                        // radio off again
   setenv("TZ", TZ_LONDON, 1);
   tzset();
 
@@ -572,6 +579,82 @@ static bool ntpSync() {
     sp.end();
   }
   return ok;
+}
+
+// Connect, sync, radio off (the SYNC command).
+static bool ntpSync() {
+  uint16_t connectMs = 0;
+  int8_t rssi = 0;
+  if (!wifiUp(connectMs, rssi)) return false;
+  bool ok = ntpSyncOnline(connectMs, rssi);
+  wifiDown();
+  return ok;
+}
+
+// ---- weather (Lesson 08): Open-Meteo, hourly, kept in NVS namespace "wx" ----
+// Location: "lat"/"lon" floats, set with `LOC <lat> <lon>` (city level is plenty) — kept on
+// the board, not in git. Data: blob "d" (WxData). "try": last attempt, for the retry gap.
+static bool wxLoad(WxData& d) {
+  Preferences x;
+  x.begin("wx", true);
+  bool ok = x.isKey("d") && x.getBytes("d", &d, sizeof d) == sizeof d;
+  x.end();
+  if (!ok) d = WxData{};
+  return ok;
+}
+
+static bool wxLocation(float& lat, float& lon) {
+  Preferences x;
+  x.begin("wx", true);
+  bool ok = x.isKey("lat") && x.isKey("lon");
+  lat = ok ? x.getFloat("lat") : NAN;
+  lon = ok ? x.getFloat("lon") : NAN;
+  x.end();
+  return ok;
+}
+
+// With Wi-Fi up (and the clock right — HTTPS checks certificate dates).
+static bool wxFetchOnline() {
+  float lat, lon;
+  if (!wxLocation(lat, lon)) { Serial.println("weather: no location (LOC <lat> <lon>)"); return false; }
+  { Preferences x; x.begin("wx", false); x.putUInt("try", (uint32_t)time(nullptr)); x.end(); }
+  uint32_t t0 = millis();
+  WxData d;
+  String err;
+  if (!Weather::fetch(lat, lon, d, err)) {
+    Serial.printf("weather: FAILED after %lu ms: %s\n", (unsigned long)(millis() - t0), err.c_str());
+    return false;
+  }
+  Preferences x;
+  x.begin("wx", false);
+  x.putBytes("d", &d, sizeof d);
+  x.end();
+  Serial.printf("weather: OK in %lu ms - today %s, %.1f / %.1f C, rain %u%%\n",
+                (unsigned long)(millis() - t0), Weather::describe(d.dayCode),
+                d.dayMax_c10 / 10.0f, d.dayMin_c10 / 10.0f, d.dayRain);
+  return true;
+}
+
+static void wxPrint() {
+  float lat, lon;
+  if (wxLocation(lat, lon)) Serial.printf("weather: location %.2f, %.2f\n", lat, lon);
+  else Serial.println("weather: no location set");
+  WxData d;
+  if (!wxLoad(d)) { Serial.println("weather: no data yet"); return; }
+  time_t ft = d.fetchedAt;
+  struct tm lt;  localtime_r(&ft, &lt);
+  char buf[24];  strftime(buf, sizeof buf, "%Y-%m-%d %H:%M", &lt);
+  Serial.printf("weather: fetched %s (%ld min ago)\n", buf, (long)((time(nullptr) - ft) / 60));
+  Serial.printf("  today: %s (code %u), max %.1f, min %.1f C, rain %u%%\n",
+                Weather::describe(d.dayCode), d.dayCode, d.dayMax_c10 / 10.0f,
+                d.dayMin_c10 / 10.0f, d.dayRain);
+  for (int i = 0; i < WxData::HOURS; ++i) {
+    time_t ht = d.hour0 + 3600 * i;
+    localtime_r(&ht, &lt);
+    strftime(buf, sizeof buf, "%H:%M", &lt);
+    Serial.printf("  %s  %-14s %5.1f C  rain %3u%%  %s\n", buf, Weather::describe(d.code[i]),
+                  d.temp_c10[i] / 10.0f, d.rain[i], (d.dayMask >> i & 1) ? "day" : "night");
+  }
 }
 
 static void dumpSyncLog() {
@@ -886,6 +969,20 @@ static void serialWindow(uint32_t ms) {
         else if (line == "SYNC") ntpSync();
         else if (line == "SYNCLOG") dumpSyncLog();
         else if (line == "PHOTOS") listPhotos();
+        else if (line == "WEATHER") wxPrint();
+        else if (line == "WXNOW") {                           // fetch the weather now
+          uint16_t cm; int8_t rs;
+          if (wifiUp(cm, rs)) { wxFetchOnline(); wifiDown(); }
+        }
+        else if (line.startsWith("LOC ")) {                   // LOC <lat> <lon>
+          float lat = NAN, lon = NAN;
+          if (sscanf(line.c_str() + 4, "%f %f", &lat, &lon) == 2 && fabsf(lat) <= 90 &&
+              fabsf(lon) <= 180) {
+            Preferences x; x.begin("wx", false);
+            x.putFloat("lat", lat); x.putFloat("lon", lon); x.end();
+            Serial.printf("weather: location set to %.2f, %.2f\n", lat, lon);
+          } else Serial.println("usage: LOC <lat> <lon>   e.g. LOC 51.51 -0.13");
+        }
         else if (line == "CARD?") cardDetect(true);
         else if (line == "PMDUMP") pmDump();
         else if (line == "RLOG") dumpRefreshLog();
@@ -1154,15 +1251,35 @@ void setup() {
     w.begin("wifi", true);
     bool haveCreds = w.isKey("ssid");
     w.end();
-    if (haveCreds && due && retryOk && !lowBatt) {
-      sp.putUInt("try", (uint32_t)now);
-      sp.end();
+    bool syncNow = haveCreds && due && retryOk && !lowBatt;
+    if (syncNow) sp.putUInt("try", (uint32_t)now);
+    sp.end();
+
+    // Weather (Lesson 08): hourly (>= 55 min since the last good fetch), 15 min after a
+    // failure, never in low battery — sharing the sync's connection when both are due.
+    WxData wd;
+    wxLoad(wd);
+    float lat, lon;
+    Preferences x;
+    x.begin("wx", true);
+    uint32_t wxTry = x.isKey("try") ? x.getUInt("try") : 0;
+    x.end();
+    bool wxNow = haveCreds && !lowBatt && wxLocation(lat, lon) &&
+                 (time_t)(now - wd.fetchedAt) >= 3300 && (time_t)(now - wxTry) >= 900;
+
+    if (syncNow || wxNow) {
       uint32_t s0 = millis();
-      bool ok = ntpSync();
-      Serial.printf("auto-sync %s in %lu ms\n", ok ? "OK" : "FAILED", (unsigned long)(millis() - s0));
-      now = time(nullptr);                                   // corrected time
-    } else {
-      sp.end();
+      uint16_t cm = 0; int8_t rs = 0;
+      if (wifiUp(cm, rs)) {
+        if (syncNow) {
+          bool ok = ntpSyncOnline(cm, rs);
+          Serial.printf("auto-sync %s\n", ok ? "OK" : "FAILED");
+          now = time(nullptr);                               // corrected time
+        }
+        if (wxNow && now >= 1700000000) wxFetchOnline();     // HTTPS needs a valid clock
+        wifiDown();
+      }
+      Serial.printf("network wake: %lu ms\n", (unsigned long)(millis() - s0));
     }
   }
 
