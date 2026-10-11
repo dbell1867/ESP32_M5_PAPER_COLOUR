@@ -598,7 +598,33 @@ static void dumpSyncLog() {
 // The card sits on the e-paper's SPI bus; M5GFX owns Arduino's GLOBAL `SPI`
 // (G47), so mount with that. Its power comes from the PMIC (on after M5.begin,
 // switched off again before sleep).
+// Card-detect (Lesson 07). Not an ESP32 pin: the slot's switch goes to the POWER CHIP's
+// GPIO1 ("SD_DEC"), enabled by its GPIO4 ("SD_DET_EN"), as in M5Stack's factory firmware.
+// M5PM1 datasheet: GPIO_MODE 0x10 (1 = output), GPIO_OUT 0x11, GPIO_IN 0x12, GPIO_DRV 0x13
+// (0 = push-pull), GPIO_PU/PD_0 0x14 (GPIO1 = bits 3:2, 01 = pull-up). Every standby
+// power-off resets these, so set them up on each use. LOW = card present.
+static int cardDetect(bool verbose) {
+  uint8_t mode = 0, out = 0, drv = 0, pull = 0;
+  if (!pmRead(0x10, &mode, 1) || !pmRead(0x11, &out, 1) || !pmRead(0x13, &drv, 1) ||
+      !pmRead(0x14, &pull, 1)) return -1;
+  drv  &= ~(1 << 4);  out |= (1 << 4);  mode |= (1 << 4);   // GPIO4: push-pull output HIGH
+  mode &= ~(1 << 1);                                        // GPIO1: input...
+  pull  = (pull & ~(0b11 << 2)) | (0b01 << 2);              // ...with pull-up
+  pmWrite(0x13, &drv, 1); pmWrite(0x11, &out, 1); pmWrite(0x10, &mode, 1); pmWrite(0x14, &pull, 1);
+  delay(5);                                                 // let the pull-up settle
+  uint8_t in = 0;
+  if (!pmRead(0x12, &in, 1)) return -1;
+  int present = (in & (1 << 1)) ? 0 : 1;
+  if (verbose) Serial.printf("card-detect: GPIO_IN 0x%02X -> GPIO1 %s -> %s\n", in,
+                             (in & 2) ? "HIGH" : "LOW", present ? "card PRESENT" : "no card");
+  return present;
+}
+
 static bool sdMount() {
+  if (cardDetect(false) == 0) {           // only skip on a definite "no card"
+    Serial.println("photo: no SD card in the slot");
+    return false;
+  }
   static constexpr uint32_t speeds[] = { 20000000, 10000000, 4000000 };
   for (int attempt = 0; attempt < 2; ++attempt) {     // a just-powered card can be slow
     for (uint32_t s : speeds) {
@@ -860,6 +886,7 @@ static void serialWindow(uint32_t ms) {
         else if (line == "SYNC") ntpSync();
         else if (line == "SYNCLOG") dumpSyncLog();
         else if (line == "PHOTOS") listPhotos();
+        else if (line == "CARD?") cardDetect(true);
         else if (line == "PMDUMP") pmDump();
         else if (line == "RLOG") dumpRefreshLog();
         else if (line == "TSWEEP") tempSweep();
