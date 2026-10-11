@@ -9,12 +9,13 @@ open questions are recorded so a future session can pick up cold.
 > Board facts: Lesson 01 "The hardware". Reusable workflow + gotchas: the
 > `esp32-board-bringup` skill.
 >
-> **Current position (2026-10-11):** Lesson 07 complete — photos in flash (LittleFS, `uploadfs`
-> from git-ignored `images/fs`), SD optional with card-detect via M5PM1 GPIO1. Refresh fixed
-> (panel reset, Lesson 06 3g). **Open:** post the M5Unified/M5GFX issue (owner's decision);
+> **Current position (2026-10-11):** Lesson 08 complete — the house dashboard: hourly weather
+> (Open-Meteo, HTTPS pinned to ISRG X1 + YR), new layout in `Screens.cpp`, battery %, `SHOT`
+> screenshots, power-button pages (dashboard → Wi-Fi QR → flash photos). Lesson 06
+> experiment commands removed. **Open:** post the M5Unified/M5GFX issue (owner's decision);
 > next lesson not chosen yet.
 >
-> `src/main.cpp` currently holds the **dashboard + photos (flash/SD) + refresh log + light sleep + panel reset** (`stages/lesson7_card_detect.cpp`). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
+> `src/main.cpp` currently holds the **house dashboard + pages + weather + photos + refresh log + light sleep + panel reset** (`stages/lesson8_final.cpp`). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
 
 ---
 
@@ -56,8 +57,10 @@ open questions are recorded so a future session can pick up cold.
 
 - [ ] Post (or not) `docs/m5gfx-issue-draft.md` to m5stack/M5GFX — owner's decision.
 - [x] SD-card bus effect re-tested: none (Lesson 07). Photos now in flash (LittleFS).
-- [ ] Lesson 08 ideas: audio (mic/speaker — user dislikes sounds), IR, the RGB LEDs, photo
-      upload over Wi-Fi, weather; minimal own e-paper driver; RTC drift over days.
+- [x] **Lesson 08** — house dashboard: weather, pages, Wi-Fi QR. `docs/lesson-08-dashboard.md`.
+- [ ] Lesson 09 ideas: a guest-network QR once the router supports it, photo upload over
+      Wi-Fi, IR, the RGB LEDs, audio (user dislikes sounds); minimal own e-paper driver;
+      RTC drift over days.
       (Battery: closed — enough for this board.)
 
 ## Later (candidates, not yet ordered)

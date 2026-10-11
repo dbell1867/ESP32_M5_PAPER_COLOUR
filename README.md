@@ -2,7 +2,7 @@
 
 A hands-on learning project: bringing up an **M5Stack PaperColor** (SKU C151, ESP32-S3
 with a 4" six-colour E Ink Spectra 6 display) from a factory-fresh unit to a
-battery-powered temperature/humidity dashboard — written in **C++ with PlatformIO**,
+battery-powered house dashboard — written in **C++ with PlatformIO**,
 by someone coming from Python/CircuitPython.
 
 Everything is documented as a series of **lessons** (`docs/`), each with the real bugs,
@@ -12,19 +12,21 @@ measurements and dead ends — not just the final code.
 
 ## What the firmware does now
 
-An e-paper **room dashboard** that runs for weeks on the internal battery:
+An e-paper **house dashboard** that runs for weeks on the internal battery:
 
-- shows the date, temperature (ink colour by range: blue < 18 °C, black, red > 25 °C),
-  humidity, min/max, and "Updated HH:MM BST"
+- shows the date, room temperature (ink colour by range: blue < 18 °C, black, red > 25 °C)
+  and humidity, **today's weather and the next 5 hours** (Open-Meteo, fetched hourly over
+  verified HTTPS), "Updated HH:MM", and the battery as a percentage and icon
 - refreshes the e-paper only when needed: every 10 min, or early if the temperature
   moves ≥ 0.5 °C
 - between updates the board is **fully off** — the power chip (M5PM1) cuts everything
   except itself and the RTC, and its timer switches the board back on every 2 minutes
-- press the **power button** (or plug in USB) for an immediate refresh and a 30 s
-  window to download the battery log over serial
+- the **power button** steps through pages: dashboard → **Wi-Fi QR code** (phones join
+  by scanning it) → each photo → dashboard; a page stays until the next press
+- plug in USB (or press the button) for a 30 s window to download the logs over serial
 - **keeps its own clock right:** once a day it joins Wi-Fi for a few seconds, fetches
   network time (NTP), records how far the RTC had drifted, and corrects it
-- **photo frame:** `SHOW <name>` puts a photo on the panel — from the board's own flash
+- **photo frame:** the photo pages (or `SHOW <name>`) put a photo on the panel — from the board's own flash
   (or a microSD card) — dithered on the computer with Floyd–Steinberg into the six real
   inks (`tools/photo_prep.py`, `tools/stage_photos.py`, `pio run -t uploadfs`)
 - **battery protection:** red "low battery" banner below 3.50 V, a clean "Battery empty"
@@ -64,13 +66,13 @@ Read logs from a sleeping board:
 # then press the power button
 ```
 
-Libraries (pinned in `platformio.ini`): M5Unified 0.2.24, M5GFX 0.2.31.
+Libraries (pinned in `platformio.ini`): M5Unified 0.2.24, M5GFX 0.2.31, ArduinoJson 7.4.3.
 
 ## Repository layout
 
 | Path | What |
 |---|---|
-| `src/` | current firmware (`main.cpp`) + `Sht40` sensor driver class |
+| `src/` | current firmware (`main.cpp`), drawing (`Screens.cpp`), weather (`Weather.cpp`), `Sht40` sensor driver |
 | `include/board_pins.h` | pin map as `constexpr` |
 | `stages/` | snapshot of `main.cpp` at each stage/lesson (copy one over `src/main.cpp` to try it) |
 | `docs/lesson-*.md` | the lessons (start here) |
@@ -105,6 +107,10 @@ Libraries (pinned in `platformio.ini`): M5Unified 0.2.24, M5GFX 0.2.31.
 7. **[Photos in flash](docs/lesson-07-flash-photos.md)** — the partition table, LittleFS
    and `uploadfs` (photos still never in git), the SD card back as an option with a
    card-detect read through the power chip, and correcting an old SD claim.
+8. **[A dashboard for the house](docs/lesson-08-dashboard.md)** — hourly weather from
+   Open-Meteo over verified HTTPS (two pinned roots), drawing split into `Screens.cpp`,
+   icons from circles and lines, battery %, screenshots without the panel (`SHOT`), and
+   pages on the power button: dashboard → Wi-Fi QR code → photos.
 
 ## Tools
 
@@ -114,7 +120,10 @@ Libraries (pinned in `platformio.ini`): M5Unified 0.2.24, M5GFX 0.2.31.
 | `tools/rtc_sync.py` | sets the RTC to the host's UTC on a second boundary and measures the offset |
 | `tools/follow_serial.py` | follows serial output across sleeps (reopens the port) |
 | `tools/pull_log.py` | waits for a service window and downloads the dashboard's logs |
-| `tools/service.py` | sends commands during a service window (`LOG`, `SCAN`, `SYNC`, `SYNCLOG`, `WIFI?`, `SIMV 3.40` to simulate a battery voltage, `SIMV 0`) |
+| `tools/service.py` | sends commands during a service window (`LOG`, `SCAN`, `SYNC`, `SYNCLOG`, `WIFI?`, `SIMV 3.40` to simulate a battery voltage, `SIMV 0`, `WEATHER`, `PHOTOS`; full list at the top of `src/main.cpp`) |
+| `tools/screenshot.py` | saves the dashboard as PNGs (`SHOT`: frame buffer + predicted glass) into git-ignored `images/screens/` |
+| `tools/stage_photos.py` | copies converted photos into `images/fs/` for `pio run -t uploadfs` |
+| `tools/wait_window.py` | waits for a service/flash window (upload after it, not during a refresh) |
 | `tools/photo_prep.py` | crop/resize a photo, preview the driver's dithering vs Floyd–Steinberg, write the panel image |
 | `tools/patch_m5gfx.py` | pre-build script: M5GFX e-paper busy timeout 20 s → 60 s, and a light-sleep hook in its busy wait |
 | `tools/wifi_setup.py` | stores Wi-Fi credentials on the board — asks for the password without showing it; run in your own terminal |

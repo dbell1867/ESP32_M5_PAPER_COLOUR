@@ -1,38 +1,34 @@
-// Lesson 04, Part 6 — L1 STANDBY dashboard v2: verified timer arming.
+// M5PaperColor home dashboard (Lessons 04-08).
 //
-// The vendor schematic's power modes: L2 "DeepSleep" keeps the main 3.3 V
-// converter (ESP32, sensors...) powered — that is what v2 did, and it drained
-// ~35 mA. L1 "Standby" leaves only the power chip (M5PM1) + RTC alive (vendor
-// figure 92.53 uA). The M5PM1's own timer powers the board back on.
+// The board sleeps in L1 STANDBY between wakes: only the power chip (M5PM1) stays on
+// (~3 mA average with the wakes, 2-3 weeks per charge). The M5PM1's timer powers the
+// board on every 2 min; each wake: read the SHT40 -> decide -> maybe refresh -> save
+// state -> arm the timer (read back) -> PMIC power-off. No RTC_DATA_ATTR survives:
+//   - the M5PM1's 32-byte RTC_MEM (0xA0-0xBF) holds the wake-to-wake state
+//   - NVS holds the logs, Wi-Fi credentials, weather, location and current page
 //
-//  Every power-on (timer every 2 min, power button, or USB plug-in):
-//    read SHT40 + RTC -> decide -> maybe refresh -> save state -> arm the
-//    PMIC timer -> PMIC power-off. The ESP32 is fully OFF in between, so
-//    RTC_DATA_ATTR memory is gone. State lives in:
-//      - the M5PM1's 32-byte RTC_MEM (0xA0-0xBF), kept while the PMIC has power
-//      - NVS flash for the hourly battery log (24 writes/day: fine for wear)
-//  Power button / USB plug-in -> refresh + 30 s service window (send LOG).
-//  Reset after a flash (not a PMIC power-on) -> fresh state + 20 s flash window.
+// What the panel shows:
+//   - DASHBOARD (Screens.cpp): date, room temp + RH, today's weather, next 5 hours,
+//     updated time, battery %. Redrawn every 10 min (sooner if the room changes
+//     by 0.5 C), every 30 min on low battery.
+//   - POWER BUTTON (the only button that wakes the board from L1): next page —
+//     dashboard -> Wi-Fi QR -> each photo in flash -> dashboard. Pages other than the
+//     dashboard stay up until the next press.
+// Network, one Wi-Fi connection per wake at most: weather hourly (Open-Meteo, verified
+// HTTPS), clock daily (NTP). Neither on low battery.
+// Battery: < 3.50 V twice -> red banner, 30 min refreshes; < 3.30 V twice -> "Battery
+// empty" once and off with no timer; the PMIC's own cut-off is raised to 3.10 V.
 //
-//  v2 (after the first 24 h test stopped waking at ~03:00 with the timer unarmed):
-//   - every PMIC write is checked and the timer is READ BACK before power-off
-//     (up to 3 attempts); never power off without a confirmed timer
-//   - if arming fails: ESP32 deep sleep for this cycle instead (costs more power
-//     once, never leaves the board dead)
-//   - counters for retries / fallbacks / failed power-offs, reported by LOG
-//   - a deep-sleep wake (reset reason DEEPSLEEP) continues the run; v1 treated
-//     it as a dev boot and would have wiped state + log
-//
-//  v3 — battery protection (Lesson 04 Part 7):
-//   - hardware backstop: the PMIC's low-voltage cut-off (BATT_LVP) raised from
-//     its 2.50 V default to 3.10 V, written + read back every wake
-//   - < 3.50 V on two wakes in a row (and no USB): LOW mode — red "charge me"
-//     banner, no early refreshes, scheduled refresh every 30 min
-//   - < 3.30 V on two wakes in a row: draw "Battery empty" ONCE, then power
-//     off with NO timer (only USB / power button wake it); e-paper keeps the
-//     message at zero power
-//   - test hook: in a service window send "SIMV 3.40" to simulate an on-battery
-//     voltage (persists in NVS); "SIMV 0" clears it
+// Power button or USB plug-in -> 30 s service window; reset after a flash -> 20 s flash
+// window. Commands (tools/service.py):
+//   LOG  RLOG  SYNCLOG             battery/wake log, refresh log, clock-sync log
+//   WEATHER  WXNOW  LOC <lat> <lon> show / fetch now / set the weather location
+//   SCAN  SYNC  SYNCDUE            Wi-Fi scan, sync the clock now, make a sync due
+//   SSID / PASS / WIFI? / WIFI-    Wi-Fi credentials (use tools/wifi_setup.py)
+//   PHOTOS  SHOW <name> [A]  CARD? list / show a photo / SD card-detect
+//   SHOT                           dashboard frame buffer as hex (tools/screenshot.py)
+//   SIMV 3.40 / SIMV 0             simulate a battery voltage (test hook)
+//   LS 1 / LS 0 / LS?              force light sleep during refreshes on USB (test)
 #include <Arduino.h>
 // SD.h BEFORE M5Unified.h: M5GFX decides at include time whether to compile its
 // file-reading support (drawJpgFile(SD, ...)) by checking which FS headers it has
@@ -751,132 +747,13 @@ static bool showPhoto(const String& name, bool routeA) {
   return true;
 }
 
-// Every documented M5PM1 register, read-only (Lesson 06: the panel's refresh doubled and
-// running the factory firmware fixed it — the power chip is the only part that keeps its
-// state across everything, so record it in the "fast" state and diff if it ever recurs).
-static void pmDump() {
-  static const uint8_t ranges[][2] = { {0x00,0x0C}, {0x10,0x19}, {0x20,0x2A}, {0x30,0x35},
-                                       {0x38,0x3D}, {0x40,0x45}, {0x48,0x4A}, {0x50,0x50},
-                                       {0x53,0x53}, {0xA0,0xBF} };
-  Serial.println("# M5PM1 register dump (reg=value)");
-  for (auto& r : ranges) {
-    for (int reg = r[0]; reg <= r[1]; ++reg) {
-      uint8_t v = 0;
-      bool ok = pmRead((uint8_t)reg, &v, 1);
-      Serial.printf("%02X=%s%02X%s", reg, ok ? "" : "??", v, (reg == r[1] || (reg & 7) == 7) ? "\n" : " ");
-    }
-  }
-  Serial.println("# end PMDUMP");
-}
-
-// Lesson 06 experiment: the factory firmware drives PM1 GPIO4 ("SD_DET_EN") as a
-// push-pull output, HIGH. Our firmware never touches it, and with HOLD_CFG = 0 every
-// standby power-off resets it. Does it change the panel's refresh time?
-static void sdDetEn(bool on) {
-  // (GPIO4's function register 0x17 already reads 00 = plain GPIO — nothing to change.)
-  uint8_t mode = 0, out = 0, drv = 0;
-  pmRead(0x10, &mode, 1); pmRead(0x11, &out, 1); pmRead(0x13, &drv, 1);
-  if (on) {
-    mode |= 1 << 4; drv &= ~(1 << 4); out |= 1 << 4;         // output, push-pull, HIGH
-    pmWrite(0x13, &drv, 1); pmWrite(0x11, &out, 1); pmWrite(0x10, &mode, 1);
-  } else {
-    mode &= ~(1 << 4); out &= ~(1 << 4);                     // back to input
-    pmWrite(0x10, &mode, 1); pmWrite(0x11, &out, 1);
-  }
-  uint8_t m2 = 0, o2 = 0, d2 = 0;
-  pmRead(0x10, &m2, 1); pmRead(0x11, &o2, 1); pmRead(0x13, &d2, 1);
-  Serial.printf("SD_DET_EN (PM1 GPIO4) %s: GPIO_MODE 0x%02X  GPIO_OUT 0x%02X  GPIO_DRV 0x%02X\n",
-                on ? "ON" : "OFF", m2, o2, d2);
-}
-
-// Lesson 06 experiment: does the panel pick its refresh program by temperature?
-// UC81xx-family controllers (the ED2208's init matches that family) take a forced
-// temperature: CCSET 0xE0 bit1 (TSFIX) = use TSSET 0xE5 (signed degC) instead of the
-// internal sensor. M5GFX never sends these, so the controller uses its own sensor.
-// The setting lasts until the controller loses power (every standby power-off).
-static constexpr int PIN_EPD_CS = 44;   // from M5GFX's PaperColor board setup
-static void epdCmd(uint8_t cmd, int data = -1) {
-  auto bus = M5.Display.getPanel()->getBus();
-  bus->beginTransaction();
-  digitalWrite(PIN_EPD_CS, LOW);
-  bus->writeCommand(cmd, 8);
-  if (data >= 0) bus->writeData((uint8_t)data, 8);
-  bus->wait();
-  digitalWrite(PIN_EPD_CS, HIGH);
-  bus->endTransaction();
-}
-static void forceTemp(int degC) {          // INT16_MIN = back to the internal sensor
-  if (degC == INT16_MIN) { epdCmd(0xE0, 0x00); return; }
-  epdCmd(0xE0, 0x02);
-  epdCmd(0xE5, (uint8_t)(int8_t)degC);
-}
-static void tempSweep() {
-  static const int steps[] = { INT16_MIN, 25, 21, 18, 12, 5, 30, 40, INT16_MIN };
-  for (int t : steps) {
-    if (t == INT16_MIN) Serial.printf("tsweep: internal sensor (SHT40 %.2f C)\n", curT);
-    else                Serial.printf("tsweep: forcing %d C\n", t);
-    forceTemp(t);
-    drawScreen(M5.Power.getBatteryVoltage() / 1000.0f, false);
-    M5.Display.setEpdMode(epd_mode_t::epd_fastest);
-    char what[24];
-    if (t == INT16_MIN) snprintf(what, sizeof what, "internal");
-    else                snprintf(what, sizeof what, "forced %d C", t);
-    timedDisplay(what);
-  }
-}
-
-// Forced temperature BEFORE the controller's first refresh after a reset (the
-// in-wake TSWEEP showed the refresh time is fixed for the whole wake). One step per
-// boot: pulse the panel's RST, M5.begin re-inits it, force, refresh, store, restart.
-static const int TF_STEPS[] = { INT16_MIN, 25, 12, 40, 0, INT16_MIN };
-static constexpr int TF_N = sizeof TF_STEPS / sizeof TF_STEPS[0];
-
-static void tforceDump() {
-  Preferences p; p.begin("tfs", true);
-  Serial.println("# forced-temperature sweep (one controller reset per step)");
-  for (int i = 0; i < TF_N; ++i) {
-    char k[6]; snprintf(k, sizeof k, "r%d", i);
-    if (TF_STEPS[i] == INT16_MIN) Serial.printf("step %d internal : ", i);
-    else                          Serial.printf("step %d %3d C    : ", i, TF_STEPS[i]);
-    Serial.printf("REFRESH %u ms\n", p.getUShort(k, 0));
-  }
-  p.end();
-}
-
-// One sweep step per boot; restarts until the last step, which prints the results.
-static void tforceStep() {
-  Preferences p; p.begin("tfs", false);
-  int i = p.getInt("i", -1);
-  if (i < 0 || i >= TF_N) { p.end(); return; }
-  int t = TF_STEPS[i];
-  if (t != INT16_MIN) forceTemp(t);
-  M5.Display.fillScreen(TFT_WHITE);
-  M5.Display.setTextColor(TFT_BLACK);
-  M5.Display.setTextSize(3);
-  M5.Display.setCursor(20, 40);
-  if (t == INT16_MIN) M5.Display.printf("Sweep step %d: internal", i);
-  else                M5.Display.printf("Sweep step %d: %d C", i, t);
-  M5.Display.setEpdMode(epd_mode_t::epd_fastest);
-  char what[24];
-  snprintf(what, sizeof what, t == INT16_MIN ? "step %d internal" : "step %d forced", i);
-  timedDisplay(what);
-  M5.Display.setTextSize(1);   // don't leave x3 behind for the dashboard
-  char k[6]; snprintf(k, sizeof k, "r%d", i);
-  p.putUShort(k, g_lastRefreshMs);
-  p.putInt("i", i + 1);
-  p.end();
-  if (i + 1 < TF_N) { Serial.flush(); delay(200); ESP.restart(); }
-  Preferences q; q.begin("tfs", false); q.putInt("i", -1); q.end();
-  tforceDump();
-}
-
 // Lesson 06: M5.begin() switches the panel's power on (PMIC GPIO0) and sends the init
 // sequence, but with clear_display = false M5Unified uses init_without_reset(), so the
 // panel's RST (G12) is never pulsed. Each standby wake therefore powers the controller up
 // with no reset — and since 7 Oct it then picked a 14-39 s refresh program at random.
-// After a real reset it ran 14.2 s six times in a row (18.8 C, where it was always 25-27 s).
-// One session's evidence — on a day's test. Pulse RST while the panel is powered, then
-// re-send the init sequence (wakeup()). TFSWEEP steps get this reset too.
+// With a real reset every wake it runs 14.2 s above ~20 C and 25 s below (normal
+// temperature compensation), confirmed over days. Pulse RST while the panel is powered,
+// then re-send the init sequence (wakeup()).
 static void resetPanel() {
   pinMode(PIN_EPD_RST, OUTPUT);
   digitalWrite(PIN_EPD_RST, LOW);  delay(20);
@@ -1010,9 +887,7 @@ static void serialWindow(uint32_t ms) {
           } else Serial.println("usage: LOC <lat> <lon>   e.g. LOC 51.51 -0.13");
         }
         else if (line == "CARD?") cardDetect(true);
-        else if (line == "PMDUMP") pmDump();
         else if (line == "RLOG") dumpRefreshLog();
-        else if (line == "TSWEEP") tempSweep();
         else if (line == "LS 1" || line == "LS 0" || line == "LS?") {
           Preferences p; p.begin("ls", false);
           if (line != "LS?") {
@@ -1023,20 +898,6 @@ static void serialWindow(uint32_t ms) {
                         p.getBool("force", false) ? "ON" : "off", g_lightSleepWait ? "ON" : "off",
                         (unsigned long)g_lightSleeps);
           p.end();
-        }
-        else if (line == "TFSWEEP") {             // start the per-reset sweep
-          Preferences p; p.begin("tfs", false); p.clear(); p.putInt("i", 0); p.end();
-          Serial.println("tfsweep: starting, one restart per step");
-          Serial.flush(); delay(200); ESP.restart();
-        }
-        else if (line == "TFRES") tforceDump();
-        else if (line == "SDDET 1") sdDetEn(true);
-        else if (line == "SDDET 0") sdDetEn(false);
-        else if (line == "REDRAW") {                          // timed dashboard refresh now
-          drawScreen(M5.Power.getBatteryVoltage() / 1000.0f, false);
-          M5.Display.setEpdMode(epd_mode_t::epd_fastest);
-          timedDisplay("redraw");
-          logRefresh(3);
         }
         else if (line.startsWith("SHOW ")) {                  // SHOW <name> [A]
           String arg = line.substring(5);
@@ -1181,13 +1042,12 @@ void setup() {
   cfg.internal_mic  = false;
   cfg.clear_display = false;
   M5.begin(cfg);
-  resetPanel();            // Lesson 06: candidate fix for the 14-39 s refresh lottery (on test)
+  resetPanel();            // Lesson 06: the fix for the 14-39 s refresh lottery
   M5.Power.M5pm1.setExtOutput(false);   // Grove 5 V off
   attachInterrupt(digitalPinToInterrupt(PIN_EPD_BUSY), onBusyEdge, CHANGE);
   M5.Display.setAutoDisplay(false);
   M5.Display.setEpdMode(epd_mode_t::epd_fastest);
   M5.Led.setBrightness(40);
-  tforceStep();            // no-op unless a TFSWEEP is in progress
   {
     uint8_t pwr = 0;
     pmRead(0x04, &pwr, 1);                       // PWR_SRC bit0 = 5 V in (USB)
