@@ -8,7 +8,8 @@ and streams it as hex RGB rows. Writes two PNGs into images/screens/ (git-ignore
                       what the panel would actually show
 Never use it on a page showing the Wi-Fi QR code: the image would contain the password.
 
-Usage: ~/.platformio/penv/bin/python tools/screenshot.py   (then press the power button)
+Usage: ~/.platformio/penv/bin/python tools/screenshot.py [icons]   (then press the power button)
+       icons: every weather icon at both sizes instead of the dashboard (SHOT ICONS)
 """
 import os, sys, time
 import serial
@@ -19,6 +20,8 @@ import epd_sim as sim
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 OUT = os.path.join(ROOT, "images", "screens")
 port = "/dev/ttyACM0"
+CMD = b"SHOT ICONS\n" if sys.argv[1:] == ["icons"] else b"SHOT\n"
+TAG = "-icons" if CMD.startswith(b"SHOT ICONS") else ""
 
 
 def grab():
@@ -27,7 +30,7 @@ def grab():
     while time.time() < deadline:
         try:
             with serial.Serial(port, 115200, timeout=0.5) as s:
-                s.write(b"SHOT\n")              # may be lost if the board is mid-refresh
+                s.write(CMD)              # may be lost if the board is mid-refresh
                 sent_after_window = False
                 rows, w, h = None, 0, 0
                 while time.time() < deadline:
@@ -41,7 +44,7 @@ def grab():
                         elif "window" in l and not sent_after_window:
                             time.sleep(2)
                             if s.in_waiting == 0:  # nothing started: the first SHOT was lost
-                                s.write(b"SHOT\n")
+                                s.write(CMD)
                             sent_after_window = True
                         else:
                             print(l, flush=True)
@@ -61,7 +64,7 @@ if len(rows) != h:
     sys.exit(f"screenshot: got {len(rows)} rows, expected {h}")
 os.makedirs(OUT, exist_ok=True)
 stamp = time.strftime("%Y%m%d-%H%M%S")
-sim.write_png(os.path.join(OUT, f"{stamp}-buffer.png"), w, h, rows)
+sim.write_png(os.path.join(OUT, f"{stamp}{TAG}-buffer.png"), w, h, rows)
 
 fn, dither = sim.MODES["fastest"]                 # what M5GFX sends in epd_fastest
 glass = []
@@ -72,5 +75,5 @@ for y in range(h):
     for byte in packed:
         g += sim.INK_RGB[byte >> 4] + sim.INK_RGB[byte & 15]
     glass.append(g)
-sim.write_png(os.path.join(OUT, f"{stamp}-glass.png"), w, h, glass)
-print(f"screenshot: {w}x{h} -> images/screens/{stamp}-buffer.png and -glass.png")
+sim.write_png(os.path.join(OUT, f"{stamp}{TAG}-glass.png"), w, h, glass)
+print(f"screenshot: {w}x{h} -> images/screens/{stamp}{TAG}-buffer.png and -glass.png")

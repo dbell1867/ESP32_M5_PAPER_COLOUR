@@ -171,6 +171,17 @@ size, so today's big icon and the hourly small ones are the same code.
 All colours are **exact panel inks** (`INK_RED = 0xBF0000` etc., Lesson 02): anything else
 would be dithered into a speckled pattern.
 
+**Yellow needs an outline.** Yellow is the palest ink: a yellow sun on white was hard to see
+on the glass. The sun, moon and thunder bolt now get a black outline (like the cloud: the
+shape a little bigger in black, then yellow on top) — 1 px on the small hourly icons, 2 px
+on the big one.
+
+**…and no anti-aliasing.** The first outlined version used `drawWideLine` for the rays. The
+icon-sheet screenshot (`SHOT ICONS`, below) showed its soft edges: blended grey/olive pixels
+that the panel prints as **green** — 1,824 green pixels on the sheet. The rays are now pairs
+of filled triangles and the fog bars rounded rectangles, every pixel exactly one ink: 0
+green pixels. Rule: on a six-ink panel, draw with **filled shapes**, not smoothed lines.
+
 ### Battery percentage
 
 A LiPo's voltage isn't linear in charge: it drops fast near full, sits around 3.7–3.9 V for
@@ -188,6 +199,9 @@ the frame buffer **without** a refresh and streams it over serial as hex RGB row
 - `-buffer.png` — what the firmware drew;
 - `-glass.png` — after the driver's `epd_fastest` ink mapping (via `tools/epd_sim.py`), i.e.
   what the panel will actually show.
+
+`SHOT ICONS` (`tools/screenshot.py icons`) does the same for a sheet of every weather icon
+at both sizes — the forecast rarely shows them all at once.
 
 Several layout rounds took minutes instead of an afternoon, and the one change you asked for
 (the **C** after the room temperature) was checked on screen before flashing.
@@ -254,6 +268,7 @@ still describing Lesson 04, now describes the current firmware and lists every c
 | `WEATHER` | show the stored forecast and when it was fetched |
 | `WXNOW` | fetch the weather now |
 | `SHOT` | stream the dashboard's frame buffer (use `tools/screenshot.py`) |
+| `SHOT ICONS` | the same for a sheet of every weather icon (`tools/screenshot.py icons`) |
 
 ## Files
 

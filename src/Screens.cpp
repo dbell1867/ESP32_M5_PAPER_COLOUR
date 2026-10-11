@@ -32,19 +32,42 @@ void drawTemp(const char* num, int x, int y, const GFXfont* font, uint8_t size,
 uint32_t tempInk(float c) { return c < 18 ? INK_BLUE : (c > 25 ? INK_RED : INK_BLACK); }
 
 // ---- weather icons, drawn from circles and lines, in a box of size s centred on (cx, cy)
-void sun(int cx, int cy, int r) {
-  int t = max(2, r / 5);
-  for (int i = 0; i < 8; ++i) {
-    float a = i * PI / 4;
-    D.drawWideLine(cx + cosf(a) * r * 1.35f, cy + sinf(a) * r * 1.35f,
-                   cx + cosf(a) * r * 1.8f,  cy + sinf(a) * r * 1.8f, t, INK_YELLOW);
-  }
-  D.fillCircle(cx, cy, r, INK_YELLOW);
+// Yellow is the palest ink: on white it barely shows, so yellow shapes get a black
+// outline — drawn like the cloud's: the shape a little bigger in black, then yellow on top.
+// A straight bar from radius r0 to r1 along angle a, half-width h: two filled triangles.
+// Not drawWideLine: that anti-aliases, and the blended edge pixels (grey, olive) come out
+// GREEN on the panel (Lesson 02) — here every pixel is exactly one ink.
+void ray(int cx, int cy, float a, float r0, float r1, float h, uint32_t ink) {
+  float c = cosf(a), s = sinf(a);
+  float x0 = cx + c * r0, y0 = cy + s * r0, x1 = cx + c * r1, y1 = cy + s * r1;
+  float px = -s * h, py = c * h;          // perpendicular offset
+  D.fillTriangle(x0 + px, y0 + py, x1 + px, y1 + py, x1 - px, y1 - py, ink);
+  D.fillTriangle(x0 + px, y0 + py, x1 - px, y1 - py, x0 - px, y0 - py, ink);
 }
 
+void sun(int cx, int cy, int r) {
+  float h = max(1.5f, r / 6.0f);          // ray half-width
+  int g = max(1, r / 8);                  // outline: 1 px small, 2 px big (keeps the ray gap)
+  for (int pass = 0; pass < 2; ++pass) {
+    uint32_t ink = pass ? INK_YELLOW : INK_BLACK;
+    int e = pass ? 0 : g;
+    for (int i = 0; i < 8; ++i) ray(cx, cy, i * PI / 4, r * 1.3f - e, r * 1.8f + e, h + e, ink);
+    D.fillCircle(cx, cy, r + e, ink);
+  }
+}
+
+// A crescent: the disc (cx, cy, r) minus a circle shifted up-right. Drawn pixel by pixel
+// so the outline can follow the inner curve too (circles alone would leave a black arc
+// outside the moon).
 void moon(int cx, int cy, int r) {
-  D.fillCircle(cx, cy, r, INK_YELLOW);
-  D.fillCircle(cx + r * 0.45f, cy - r * 0.3f, r * 0.85f, INK_WHITE);
+  int g = max(1, r / 8);
+  float ox = cx + r * 0.45f, oy = cy - r * 0.3f, rc = r * 0.85f;
+  for (int y = cy - r - g; y <= cy + r + g; ++y)
+    for (int x = cx - r - g; x <= cx + r + g; ++x) {
+      float d1 = hypotf(x - cx, y - cy), d2 = hypotf(x - ox, y - oy);
+      if (d1 <= r && d2 > rc)            D.drawPixel(x, y, INK_YELLOW);
+      else if (d1 <= r + g && d2 > rc - g) D.drawPixel(x, y, INK_BLACK);
+    }
 }
 
 void cloud(int cx, int cy, int w) {     // white with a black outline
@@ -80,17 +103,25 @@ void flakes(int cx, int cy, int w, int n) {
 
 void bolt(int cx, int cy, int w) {
   int x = cx, y = cy, s = w * 0.12f;
-  D.fillTriangle(x + s, y, x - s, y + 1.3f * s, x + 0.2f * s, y + 1.3f * s, INK_YELLOW);
-  D.fillTriangle(x + 0.4f * s, y + 1.1f * s, x - 0.9f * s, y + 2.6f * s, x - 0.1f * s, y + 1.1f * s, INK_YELLOW);
+  auto shape = [&](int dx, int dy, uint32_t ink) {
+    D.fillTriangle(x + s + dx, y + dy, x - s + dx, y + 1.3f * s + dy, x + 0.2f * s + dx, y + 1.3f * s + dy, ink);
+    D.fillTriangle(x + 0.4f * s + dx, y + 1.1f * s + dy, x - 0.9f * s + dx, y + 2.6f * s + dy,
+                   x - 0.1f * s + dx, y + 1.1f * s + dy, ink);
+  };
+  static const int8_t OFF[8][2] = { {-1,-1}, {0,-1}, {1,-1}, {-1,0}, {1,0}, {-1,1}, {0,1}, {1,1} };
+  for (auto& o : OFF) shape(o[0], o[1], INK_BLACK);   // outline: the bolt shifted 1 px all round
+  shape(0, 0, INK_YELLOW);
 }
 
 void wxIcon(uint8_t code, bool day, int cx, int cy, int s) {
   const int r = s * 0.22f;
   if (code == 0) { day ? sun(cx, cy, r) : moon(cx, cy, r * 1.2f); return; }
   if (code == 45 || code == 48) {                         // fog
-    for (int i = -1; i <= 1; ++i)
-      D.drawWideLine(cx - s * 0.38f + (i & 1) * s * 0.08f, cy + i * s * 0.2f,
-                     cx + s * 0.38f, cy + i * s * 0.2f, max(2, s / 14), INK_BLACK);
+    int h = max(2, s / 14);                               // half-height (no anti-aliasing)
+    for (int i = -1; i <= 1; ++i) {
+      int x0 = cx - s * 0.38f + (i & 1) * s * 0.08f, x1 = cx + s * 0.38f;
+      D.fillRoundRect(x0 - h, cy + i * s * 0.2f - h, x1 - x0 + 2 * h, 2 * h + 1, h, INK_BLACK);
+    }
     return;
   }
   bool precip = code >= 51;
@@ -282,3 +313,23 @@ void drawWifiQr(const char* ssid, const char* qrText) {
   D.setFont(&fonts::FreeSans9pt7b);
   D.drawString("press the power button for the next page", W / 2, 560);
 }
+
+void drawIconSheet() {
+  static const struct { uint8_t code; bool day; const char* name; } I[] = {
+    { 0, true, "clear" },  { 0, false, "clear night" }, { 2, true, "part cloud" },
+    { 2, false, "pc night" }, { 3, true, "overcast" }, { 45, true, "fog" },
+    { 53, true, "drizzle" }, { 63, true, "rain" }, { 73, true, "snow" }, { 95, true, "thunder" },
+  };
+  D.fillScreen(INK_WHITE);
+  D.setTextSize(1);
+  D.setTextColor(INK_BLACK);
+  D.setTextDatum(top_center);
+  D.setFont(&fonts::FreeSans9pt7b);
+  for (int i = 0; i < 10; ++i) {          // two columns: big (96) and small (58), 5 rows each
+    int col = i % 2, row = i / 2, x0 = col * 200, y0 = row * 118;
+    wxIcon(I[i].code, I[i].day, x0 + 60, y0 + 52, 96);
+    wxIcon(I[i].code, I[i].day, x0 + 155, y0 + 52, 58);
+    D.drawString(I[i].name, x0 + 100, y0 + 98);
+  }
+}
+

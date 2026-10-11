@@ -26,6 +26,10 @@ void drawDashboard(const DashInfo& d);
 // ("WIFI:T:WPA;S:...;P:...;;"). The text contains the password: never log or screenshot it.
 void drawWifiQr(const char* ssid, const char* qrText);
 
+// Every weather icon at the dashboard's two sizes, labelled — for reviewing the drawing
+// with SHOT ICONS (screenshot only; never refreshed to the panel).
+void drawIconSheet();
+
 // Rough state of charge from the resting voltage: a typical single-cell LiPo curve,
 // 3.30 V (our "empty" shutdown) = 0 %, 4.20 V = 100 %. Approximate by nature.
 int batteryPercent(float v);

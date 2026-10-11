@@ -26,7 +26,7 @@
 //   SCAN  SYNC  SYNCDUE            Wi-Fi scan, sync the clock now, make a sync due
 //   SSID / PASS / WIFI? / WIFI-    Wi-Fi credentials (use tools/wifi_setup.py)
 //   PHOTOS  SHOW <name> [A]  CARD? list / show a photo / SD card-detect
-//   SHOT                           dashboard frame buffer as hex (tools/screenshot.py)
+//   SHOT  SHOT ICONS               dashboard / icon sheet as hex (tools/screenshot.py [icons])
 //   SIMV 3.40 / SIMV 0             simulate a battery voltage (test hook)
 //   LS 1 / LS 0 / LS?              force light sleep during refreshes on USB (test)
 #include <Arduino.h>
@@ -835,8 +835,9 @@ static bool showPage(uint8_t page, const String* photos, int nPhotos) {
 // SHOT (Lesson 08): draw the dashboard into the frame buffer WITHOUT refreshing the
 // panel, and send it as hex RGB rows; tools/screenshot.py turns it into a PNG. Layout
 // changes can be reviewed on the computer instead of waiting 14-25 s per try.
-static void shotDashboard() {
-  drawScreen(M5.Power.getBatteryVoltage() / 1000.0f, false);
+static void shotDashboard(bool icons = false) {
+  if (icons) drawIconSheet();                       // SHOT ICONS: the weather icon sheet
+  else       drawScreen(M5.Power.getBatteryVoltage() / 1000.0f, false);
   const int W = M5.Display.width(), H = M5.Display.height();
   static uint8_t rgb[400 * 3];
   static char hex[400 * 6 + 1];
@@ -873,6 +874,7 @@ static void serialWindow(uint32_t ms) {
         else if (line == "PHOTOS") listPhotos();
         else if (line == "WEATHER") wxPrint();
         else if (line == "SHOT") shotDashboard();
+        else if (line == "SHOT ICONS") shotDashboard(true);
         else if (line == "WXNOW") {                           // fetch the weather now
           uint16_t cm; int8_t rs;
           if (wifiUp(cm, rs)) { wxFetchOnline(); wifiDown(); }
