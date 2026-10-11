@@ -39,6 +39,7 @@
 // already seen. Included after, it fails with "abstract type DataWrapperT<fs::SDFS>".
 #include <SPI.h>
 #include <SD.h>
+#include <LittleFS.h>       // Lesson 07: photos in the flash data partition
 #include <M5Unified.h>
 #include <Preferences.h>
 #include <WiFi.h>
@@ -610,42 +611,75 @@ static bool sdMount() {
   return false;
 }
 
-static void listPhotos() {
-  if (!sdMount()) return;
-  File dir = SD.open("/photos");
-  Serial.println("# /photos on the SD card");
-  for (File e = dir ? dir.openNextFile() : File(); e; e = dir.openNextFile())
+// ---- Photos in flash (Lesson 07) ----
+// LittleFS on the 3.375 MiB data partition (label "spiffs" in default_16MB.csv), filled
+// by `pio run -t uploadfs` from images/fs/ (git-ignored). Mounted only when needed, and
+// never auto-formatted: an empty partition means "upload the photos", not "erase it".
+static bool fsMount() {
+  if (LittleFS.begin(false /*formatOnFail*/, "/littlefs", 5, "spiffs")) return true;
+  Serial.println("photo: flash filesystem not found - run: pio run -t uploadfs");
+  return false;
+}
+
+static void listDir(fs::FS& fs, const char* where) {
+  File dir = fs.open("/photos");
+  Serial.printf("# /photos in %s\n", where);
+  int n = 0;
+  for (File e = dir ? dir.openNextFile() : File(); e; e = dir.openNextFile(), ++n)
     Serial.printf("  %-24s %8lu\n", e.name(), (unsigned long)e.size());
+  if (!n) Serial.println("  (none)");
   dir.close();
-  SD.end();
+}
+
+static void listPhotos() {
+  if (fsMount()) {
+    listDir(LittleFS, "flash");
+    Serial.printf("  flash: %lu of %lu bytes used\n", (unsigned long)LittleFS.usedBytes(),
+                  (unsigned long)LittleFS.totalBytes());
+    LittleFS.end();
+  }
+  if (sdMount()) {
+    listDir(SD, "the SD card");
+    SD.end();
+  }
 }
 
 // Route B (default): our own Floyd-Steinberg version, packed 4-bit ink codes,
 // drawn in the EXACT palette colours so epd_fastest passes them through untouched.
 // Route A: the 400x600 JPEG, decoded here and dithered by the DRIVER (epd_quality).
+// Looks in flash first, then on the SD card (if one mounts).
 static bool showPhoto(const String& name, bool routeA) {
-  if (!sdMount()) return false;
   String path = "/photos/" + name + (routeA ? ".jpg" : ".epd4");
-  if (!SD.exists(path)) {
-    Serial.printf("photo: %s not found (try PHOTOS)\n", path.c_str());
-    SD.end();
+  fs::FS* src = nullptr;
+  const char* where = "";
+  if (fsMount()) {
+    if (LittleFS.exists(path)) { src = &LittleFS; where = "flash"; }
+    else LittleFS.end();
+  }
+  if (!src && sdMount()) {
+    if (SD.exists(path)) { src = &SD; where = "SD"; }
+    else SD.end();
+  }
+  if (!src) {
+    Serial.printf("photo: %s not found in flash or on SD (try PHOTOS)\n", path.c_str());
     return false;
   }
+  auto unmount = [&] { if (src == &SD) SD.end(); else LittleFS.end(); };
   uint32_t t0 = millis();
   M5.Display.fillScreen(INK_WHITE);
   if (routeA) {
-    M5.Display.drawJpgFile(SD, path.c_str(), 0, 0);
+    M5.Display.drawJpgFile(*src, path.c_str(), 0, 0);
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
   } else {
     // Ink codes -> the driver's own palette RGB (Panel_ED2208 epd_palette[]).
     static constexpr uint32_t INK_RGB[8] = { 0x000000, 0xFFFFFF, 0xFFF338, 0xBF0000,
                                              0xFFFFFF, 0x6440FF, 0x438A1C, 0xFFFFFF };
-    File f = SD.open(path);
+    File f = src->open(path);
     if (!f || f.size() != 120000) {
       Serial.printf("photo: %s is %lu bytes, expected 120000\n", path.c_str(),
                     (unsigned long)(f ? f.size() : 0));
       if (f) f.close();
-      SD.end();
+      unmount();
       return false;
     }
     uint8_t row[200];                    // 400 px = 200 bytes, 2 px per byte
@@ -661,7 +695,7 @@ static bool showPhoto(const String& name, bool routeA) {
     f.close();
     M5.Display.setEpdMode(epd_mode_t::epd_fastest);
   }
-  SD.end();
+  unmount();
   uint32_t t1 = millis();
   M5.Led.setColor(1, 255, 0, 0);  M5.Led.display();
   timedDisplay(routeA ? "photo A" : "photo B");
@@ -669,8 +703,9 @@ static bool showPhoto(const String& name, bool routeA) {
   logRefresh(routeA ? 2 : 1);
   M5.Led.setAllColor(0, 0, 0);    M5.Led.display();
   M5.Display.setEpdMode(epd_mode_t::epd_fastest);   // dashboard default
-  Serial.printf("photo: %s shown via route %c (load %lu ms, refresh %lu ms)\n", path.c_str(),
-                routeA ? 'A' : 'B', (unsigned long)(t1 - t0), (unsigned long)(millis() - t1));
+  Serial.printf("photo: %s from %s shown via route %c (load %lu ms, refresh %lu ms)\n",
+                path.c_str(), where, routeA ? 'A' : 'B', (unsigned long)(t1 - t0),
+                (unsigned long)(millis() - t1));
   prefs.putUChar("hold", 1);           // photo-frame mode until the power button
   return true;
 }
