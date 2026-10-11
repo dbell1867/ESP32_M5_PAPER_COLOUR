@@ -13,17 +13,19 @@ const char* MONTHS[] = { "January", "February", "March", "April", "May", "June",
 // The GFX fonts are plain ASCII (no degree sign): draw text + a small ring.
 // (x, y) is the TOP-CENTRE of the whole thing.
 void drawTemp(const char* num, int x, int y, const GFXfont* font, uint8_t size,
-              uint32_t ink, int ringR) {
+              uint32_t ink, int ringR, const char* unit = nullptr) {
   D.setFont(font);
   D.setTextSize(size);
   D.setTextColor(ink);
   D.setTextDatum(top_left);
   int tw = D.textWidth(num), gap = ringR / 2 + 2;
-  int x0 = x - (tw + gap + 2 * ringR) / 2;
+  int uw = unit ? gap + D.textWidth(unit) : 0;
+  int x0 = x - (tw + gap + 2 * ringR + uw) / 2;
   D.drawString(num, x0, y);
   int cx = x0 + tw + gap + ringR, cy = y + ringR + size * 2;
   D.fillCircle(cx, cy, ringR, ink);
   D.fillCircle(cx, cy, max(1, ringR / 2), INK_WHITE);
+  if (unit) D.drawString(unit, cx + ringR + gap, y);
   D.setTextSize(1);
 }
 
@@ -163,7 +165,7 @@ void drawDashboard(const DashInfo& d) {
     D.drawString("sensor error", W / 2, ry + 70);
   } else {
     snprintf(buf, sizeof buf, "%.1f", d.roomC);
-    drawTemp(buf, W / 2, ry + 26, &fonts::FreeSansBold24pt7b, 2, tempInk(d.roomC), 10);
+    drawTemp(buf, W / 2, ry + 26, &fonts::FreeSansBold24pt7b, 2, tempInk(d.roomC), 10, "C");
     snprintf(buf, sizeof buf, "%.0f %% RH", d.roomRH);
     D.setFont(&fonts::FreeSansBold18pt7b);
     D.setTextColor(INK_BLACK);
