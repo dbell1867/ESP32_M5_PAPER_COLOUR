@@ -57,5 +57,5 @@ plus a pre-build patch raising the default timeout to 60 s.
 3. Minor: the PaperColor panel config sets `cfg.pin_rst = GPIO_NUM_43`, but G43 is the bus DC
    pin and the real reset is G12 (`_pin_reset(GPIO_NUM_12, ...)`). Unused today
    (`init(false)`), but misleading.
-4. Separate observation: with a microSD card inserted, the 120 KB panel transfer slows from
-   241 ms to 639 ms and BUSY shows glitch edges (shared SPI bus, CS G47).
+4. Docs: the PaperColor page lists ESP32 G1 as SD card-detect, but G1 is button C; the
+   detect switch is on M5PM1 GPIO1 (with GPIO4 as enable), as the factory firmware uses it.

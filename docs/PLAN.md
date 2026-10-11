@@ -9,13 +9,12 @@ open questions are recorded so a future session can pick up cold.
 > Board facts: Lesson 01 "The hardware". Reusable workflow + gotchas: the
 > `esp32-board-bringup` skill.
 >
-> **Current position (2026-10-11):** Lesson 06 complete. Refresh mystery solved (3g): the
-> panel was never reset after power-up; `resetPanel()` on every boot → only 14.2 s (>~20 °C)
-> or 25.0 s (<~20 °C). 60 s timeout patch kept. Light sleep during refresh on battery only.
-> Battery work closed. **Open:** post the M5Unified/M5GFX issue (`docs/m5gfx-issue-draft.md`)
-> — owner's decision; next lesson not chosen yet.
+> **Current position (2026-10-11):** Lesson 07 complete — photos in flash (LittleFS, `uploadfs`
+> from git-ignored `images/fs`), SD optional with card-detect via M5PM1 GPIO1. Refresh fixed
+> (panel reset, Lesson 06 3g). **Open:** post the M5Unified/M5GFX issue (owner's decision);
+> next lesson not chosen yet.
 >
-> `src/main.cpp` currently holds the **dashboard + photos + refresh log + light sleep + panel reset** (`stages/lesson6_panel_reset.cpp`). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
+> `src/main.cpp` currently holds the **dashboard + photos (flash/SD) + refresh log + light sleep + panel reset** (`stages/lesson7_card_detect.cpp`). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
 
 ---
 
@@ -33,7 +32,7 @@ open questions are recorded so a future session can pick up cold.
 - [x] **Stage 3a — Button probe** — A=G10, B=G9, C=G1 (top-centre); external
       pull-ups, active LOW, no rockers.
 - [x] **Stage 3b — microSD** — 20 MHz via the **global `SPI`** M5GFX already owns;
-      **G1 is not card-detect** (docs wrong; no card-detect line exists).
+      **G1 is not card-detect** (docs wrong); the real one is M5PM1 GPIO1 (Lesson 07).
 - [x] **Stage 3c — Buttons + LED** — LED preview / status, e-paper commit; skips
       refresh if already shown.
 - [x] **Lesson 01** written.
@@ -56,11 +55,10 @@ open questions are recorded so a future session can pick up cold.
 ## ▶ Next
 
 - [ ] Post (or not) `docs/m5gfx-issue-draft.md` to m5stack/M5GFX — owner's decision.
-- [ ] Optional: flash the factory backup, time one refresh by eye, restore.
-- [ ] Re-test the SD-card bus effect deliberately (card in, measure transfer/BUSY) before
-      using photos from SD again — or move photos to the flash data partition.
-- [ ] Lesson 07 ideas: battery life (fewer refreshes — now more valuable at 26.7 s each);
-      weather; minimal own e-paper driver; RTC drift over days.
+- [x] SD-card bus effect re-tested: none (Lesson 07). Photos now in flash (LittleFS).
+- [ ] Lesson 08 ideas: audio (mic/speaker — user dislikes sounds), IR, the RGB LEDs, photo
+      upload over Wi-Fi, weather; minimal own e-paper driver; RTC drift over days.
+      (Battery: closed — enough for this board.)
 
 ## Later (candidates, not yet ordered)
 
@@ -109,7 +107,7 @@ open questions are recorded so a future session can pick up cold.
 ## Open questions
 
 - ~~Why 14–39 s refreshes?~~ Solved: no panel reset after power-up (Lesson 06 3g). Still unexplained: why it began on 7 Oct, not when L1 started.
-- What does an inserted SD card do to the shared SPI bus (transfer 241 → 639 ms, BUSY glitches)?
+- ~~What does an inserted SD card do to the shared SPI bus?~~ Nothing measurable (Lesson 07).
 
 - Why does the Grove 5 V boost draw 24 mA with nothing attached? (schematic)
 - What power-path rule does the PMIC use (battery vs USB) while plugged in?

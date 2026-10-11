@@ -194,8 +194,11 @@ What it establishes:
    20 s and its caller ignores the result, so POWER_OFF was sent **mid-refresh** — visible
    as the missing power-off phase. Lesson 02 flagged this risk ("28 % headroom"); it
    became real. With 60 s, the three phases come back cleanly.
-4. **An inserted SD card disturbs the shared bus:** transfer 241 → 639 ms, and BUSY
-   edges glitch/merge. A separate, smaller effect.
+4. ~~**An inserted SD card disturbs the shared bus:** transfer 241 → 639 ms, and BUSY
+   edges glitch/merge.~~ **Corrected in Lesson 07:** re-tested with the card in, mounted
+   and listed — 241 ms and clean phases, three times. The 639 ms readings were all first
+   refreshes after an upload before the panel-reset fix (3g), most likely a symptom of the
+   un-reset controller, not of the card.
 5. **Not our code:** the factory firmware uses M5GFX **0.2.21** (commit `5268353`, 15 May)
    whose `Panel_ED2208` init bytes, refresh sequence and 20 s timeout are **identical**.
 
@@ -403,7 +406,8 @@ sequence (`Panel_ED2208::setSleep(false)` → `_init_sequence()`). It costs ~70 
   `refresh_ms` in the hourly battery log).
 - Service commands for the investigation: `PMDUMP`, `REDRAW`, `SDDET 0/1`, `TSWEEP`,
   `TFSWEEP`/`TFRES`, `LS 0/1/?`.
-- **SD card kept out of the board** until the bus disturbance is understood.
+- ~~SD card kept out of the board until the bus disturbance is understood.~~ Cleared in
+  Lesson 07: the card doesn't slow the panel, and it now has a working card-detect.
 - **To report:** the missing reset and the 20 s timeout (draft: `docs/m5gfx-issue-draft.md`).
 
 ## Files
