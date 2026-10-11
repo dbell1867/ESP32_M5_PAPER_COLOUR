@@ -9,13 +9,13 @@ open questions are recorded so a future session can pick up cold.
 > Board facts: Lesson 01 "The hardware". Reusable workflow + gotchas: the
 > `esp32-board-bringup` skill.
 >
-> **Current position (2026-10-10):** Lesson 06 complete. The panel REFRESH varies 14–39 s
-> (a program chosen at each power-up since 7 Oct; forced temperature has no effect); the
-> 60 s timeout patch covers it. Light sleep during refresh is on (`LS`), saving ≤14 %.
-> Battery work closed. **Open:** post the M5GFX issue (`docs/m5gfx-issue-draft.md`) — owner's
-> decision; next lesson not chosen yet.
+> **Current position (2026-10-11):** Lesson 06 complete. Refresh mystery solved (3g): the
+> panel was never reset after power-up; `resetPanel()` on every boot → only 14.2 s (>~20 °C)
+> or 25.0 s (<~20 °C). 60 s timeout patch kept. Light sleep during refresh on battery only.
+> Battery work closed. **Open:** post the M5Unified/M5GFX issue (`docs/m5gfx-issue-draft.md`)
+> — owner's decision; next lesson not chosen yet.
 >
-> `src/main.cpp` currently holds the **dashboard + photos + refresh log + light sleep** (`stages/lesson6_light_sleep.cpp`). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
+> `src/main.cpp` currently holds the **dashboard + photos + refresh log + light sleep + panel reset** (`stages/lesson6_panel_reset.cpp`). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
 
 ---
 
@@ -108,7 +108,7 @@ open questions are recorded so a future session can pick up cold.
 
 ## Open questions
 
-- What changed on 7 Oct so the panel now chooses among 14–39 s programs at power-up (was always 14.4 s)? Lesson 06 Part 3e; a question for M5Stack.
+- ~~Why 14–39 s refreshes?~~ Solved: no panel reset after power-up (Lesson 06 3g). Still unexplained: why it began on 7 Oct, not when L1 started.
 - What does an inserted SD card do to the shared SPI bus (transfer 241 → 639 ms, BUSY glitches)?
 
 - Why does the Grove 5 V boost draw 24 mA with nothing attached? (schematic)

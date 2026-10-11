@@ -38,7 +38,7 @@ Measured on battery (rough, from voltage slope): ~**3 mA** average in standby mo
 |---|---|
 | Board | M5Stack PaperColor (C151) |
 | MCU | ESP32-S3R8 — 16 MB flash, 8 MB octal PSRAM |
-| Display | 4" E Ink Spectra 6, 400×600, 6 inks, 14–39 s full refresh (see below) |
+| Display | 4" E Ink Spectra 6, 400×600, 6 inks, 14.2 s full refresh (25 s below ~20 °C) |
 | Also used | SHT40 temp/humidity, RX8130CE RTC, M5PM1 power chip, 3 buttons, 2 RGB LEDs, microSD |
 | Battery | 1250 mAh LiPo |
 
@@ -98,8 +98,9 @@ Libraries (pinned in `platformio.ini`): M5Unified 0.2.24, M5GFX 0.2.31.
 5. **[Wi-Fi and NTP](docs/lesson-05-wifi-ntp.md)** — scanning first, keeping the Wi-Fi
    password out of code and git, SNTP, and measuring the RTC's drift (~1.1 s/day).
 6. **[A photo on six inks](docs/lesson-06-photo.md)** — error diffusion vs the driver's
-   dithering (previewed, then confirmed on the glass), an investigation into the panel's
-   refresh time (14.4 s → 14–39 s since 7 Oct), and light sleep while the panel refreshes.
+   dithering (previewed, then confirmed on the glass), an investigation into erratic
+   14–39 s refreshes (cause: the panel was never reset after power-up), and light sleep
+   while the panel refreshes.
 
 ## Tools
 
@@ -134,10 +135,11 @@ esptool --chip esp32s3 --port /dev/ttyACM0 write-flash 0 backup/papercolor-facto
 - M5GFX owns Arduino's global `SPI` (use it for the SD card), and M5Unified's internal
   I²C bus is port 1 — `Wire.begin(3, 2)` would steal it.
 - G1 is a button, **not** an SD card-detect pin (the docs say both); card-detect is the power chip's GPIO1.
-- Full e-paper refresh was ≈ 14.4 s of panel time (16.1 s per `display()`) at every
-  temperature tested; since 7 Oct this unit picks one of several programs at each power-up
-  — **14.2 / 25 / 26.7 / 33–39 s** (cause unknown; forcing a temperature has no effect).
-  M5GFX's busy wait gives up at 20 s and then powers the panel off mid-refresh —
+- With `clear_display = false`, M5Unified starts the panel **without a reset** (RST is G12;
+  M5GFX's panel config wrongly says 43, which is DC). After each power-down the controller
+  then sometimes ran 26.7–39 s refresh programs. Pulsing G12 after `M5.begin()` fixes it:
+  **14.2 s** above ~20 °C, **25.0 s** below (normal temperature compensation).
+- M5GFX's busy wait gives up at 20 s and then powers the panel off mid-refresh —
   `tools/patch_m5gfx.py` raises it to 60 s.
 - An inserted microSD card slows the e-paper's data transfer on the shared SPI bus.
 

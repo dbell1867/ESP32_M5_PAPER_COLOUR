@@ -38,6 +38,19 @@ while time.time() < deadline:
                     # again here made the board run everything TWICE (e.g. two 16 s
                     # photo refreshes). Just wait for the replies.
                     handled = True
+                    # If the board was light-sleeping through a refresh when the port
+                    # opened (Lesson 06), those bytes were lost: nothing answers. Resend
+                    # only then — resending unconditionally ran everything twice.
+                    t = time.time() + 2
+                    answered = False
+                    while time.time() < t and not answered:
+                        more = s.readline().decode(errors="replace").rstrip()
+                        if more:
+                            print(more, flush=True); answered = True
+                    if not answered:
+                        print("(no reply - resending)", flush=True)
+                        for c in cmds:
+                            s.write((c + "\n").encode())
                     quiet = time.time() + 60
                     while time.time() < quiet:
                         more = s.readline().decode(errors="replace").rstrip()
