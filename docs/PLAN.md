@@ -15,7 +15,7 @@ open questions are recorded so a future session can pick up cold.
 > experiment commands removed. **Open:** post the M5Unified/M5GFX issue (owner's decision);
 > next lesson not chosen yet.
 >
-> `src/main.cpp` currently holds the **house dashboard + pages + weather + photos + refresh log + light sleep + panel reset** (`stages/lesson8_final.cpp`). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
+> `src/main.cpp` currently holds the **house dashboard + pages + weather + photos + refresh log + light sleep + panel reset** (`stages/lesson8_nvs_fix.cpp`; 2026-10-14: NVS-full fix, packed logs — re-check `LOG`'s NVS line after a few days). Make sure `SIMV` is 0 (`tools/service.py LOG`). Wake it with the POWER button (A/B/C don't work in L1).
 
 ---
 

@@ -285,7 +285,12 @@ void drawDashboard(const DashInfo& d) {
   D.setTextDatum(top_left);
   strftime(buf, sizeof buf, "Updated %H:%M", &lt);
   D.drawString(buf, 20, 570);
-  if (d.haveWx && (d.now - fetched) > 3 * 3600) {        // say so if the forecast is stale
+  if (d.storageLow) {                                    // more urgent than a stale forecast
+    D.setFont(&fonts::FreeSansBold9pt7b);
+    D.setTextColor(INK_RED);
+    D.drawString("STORAGE FULL", 176, 574);
+    D.setTextColor(INK_BLACK);
+  } else if (d.haveWx && (d.now - fetched) > 3 * 3600) { // say so if the forecast is stale
     D.setFont(&fonts::FreeSans9pt7b);
     strftime(buf, sizeof buf, "(weather %H:%M)", &ft);
     D.drawString(buf, 176, 574);

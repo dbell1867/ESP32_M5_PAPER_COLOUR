@@ -181,8 +181,62 @@ static constexpr uint16_t MAGIC = 0x4C31;  // "L1"
 static State st;
 
 // ---- hourly battery log in NVS flash ----
-struct BattEntry { uint32_t t; uint16_t batt_mV; int16_t temp_cC; uint16_t refreshMs; };
-static constexpr int BATT_LOG = 120;
+// ---- NVS ring logs (Lesson 08 fix). NVS is only 20 KB = 630 entries of 32 bytes, 504
+// usable (one page stays in reserve). Every KEY costs overhead — a 10-byte record in its
+// own blob key takes 3 entries — so one key per record filled NVS in ~2.6 days and
+// stopped the weather saving. Records are now packed many to a blob, one key per blob.
+// The blob being filled replaces the oldest, so (blobs - 1) * perBlob records are always
+// kept, plus the ones in the current blob.
+struct RingLog { const char* ns; uint16_t recSize, perBlob, blobs; };
+
+static bool ringAppend(const RingLog& L, const void* rec) {
+  static uint8_t buf[256];
+  Preferences r;
+  r.begin(L.ns, false);
+  uint32_t n = r.getUInt("n", 0);
+  uint32_t blob = (n / L.perBlob) % L.blobs, slot = n % L.perBlob;
+  char key[8];
+  snprintf(key, sizeof key, "r%u", (unsigned)blob);
+  size_t sz = (size_t)L.recSize * L.perBlob;
+  memset(buf, 0, sz);
+  if (slot) r.getBytes(key, buf, sz);                     // continue the current blob
+  memcpy(buf + slot * L.recSize, rec, L.recSize);
+  bool ok = r.putBytes(key, buf, sz) == sz && r.putUInt("n", n + 1);
+  r.end();
+  return ok;
+}
+
+// Calls fn(index, record) for every kept record, oldest first.
+template <class F> static void ringForEach(const RingLog& L, F fn) {
+  static uint8_t buf[256];
+  Preferences r;
+  r.begin(L.ns, true);
+  uint32_t n = r.getUInt("n", 0);
+  uint32_t kept = min<uint32_t>(n, (uint32_t)(L.blobs - 1) * L.perBlob + n % L.perBlob);
+  size_t sz = (size_t)L.recSize * L.perBlob;
+  int loaded = -1;
+  for (uint32_t i = n - kept; i < n; ++i) {
+    int blob = (i / L.perBlob) % L.blobs;
+    if (blob != loaded) {
+      char key[8];
+      snprintf(key, sizeof key, "r%d", blob);
+      if (r.getBytes(key, buf, sz) != sz) { loaded = -1; continue; }
+      loaded = blob;
+    }
+    fn(i, buf + (i % L.perBlob) * L.recSize);
+  }
+  r.end();
+}
+
+// NVS entries still free for data (excluding the reserved page); -1 if unknown.
+static int nvsAvailable() {
+  nvs_stats_t ns;
+  return nvs_get_stats(nullptr, &ns) == ESP_OK ? (int)ns.available_entries : -1;
+}
+static constexpr int NVS_LOW = 40;   // warn below this (the logs at full size need ~140)
+
+struct __attribute__((packed)) BattEntry { uint32_t t; uint16_t batt_mV; int16_t temp_cC; uint16_t refreshMs; };
+static constexpr RingLog BLOG = { "blog", sizeof(BattEntry), 12, 11 };   // >= 120 h
 static Preferences prefs;
 
 static float curT = NAN, curRH = NAN;
@@ -210,6 +264,8 @@ static void drawScreen(float battV, bool lowBatt) {
   d.usb = src & 1;
   d.lowBatt = lowBatt;
   d.haveWx = wxLoad(d.wx);
+  int avail = nvsAvailable();
+  d.storageLow = avail >= 0 && avail < NVS_LOW;
   drawDashboard(d);
 }
 
@@ -243,7 +299,7 @@ static void drawEmptyScreen(float battV) {
 // ---- refresh log (Lesson 06): context for every refresh, to find what makes the
 // panel's REFRESH switch between ~14.4 s and ~26.7 s. 16-byte records grouped 16 per
 // NVS blob (NVS stores each key with ~32 B overhead, so one key per record would
-// fill the 20 KB partition); 12 blobs = the last 192 refreshes (~1.3 days).
+// fill the 20 KB partition); 4 blobs = at least the last 48 refreshes (Lesson 08: was 12).
 struct __attribute__((packed)) RefreshRec {
   uint32_t t;            // UTC epoch
   uint16_t refreshMs;    // panel REFRESH phase
@@ -256,14 +312,16 @@ struct __attribute__((packed)) RefreshRec {
                          // bit4 the ESP32 light-slept through the refresh
 };
 static_assert(sizeof(RefreshRec) == 16, "keep records 16 bytes");
-static constexpr int RREC_PER_BLOB = 16, RBLOBS = 12;
+static constexpr int RREC_PER_BLOB = 16, RBLOBS = 4;   // >= 48 refreshes (~8 h)
+
+static constexpr RingLog RLOGS = { "rlog", sizeof(RefreshRec), RREC_PER_BLOB, RBLOBS };
 
 static void logRefresh(uint8_t kind) {
   if (!g_lastRefreshMs) return;
   Preferences rl;
-  rl.begin("rlog", false);
-  uint32_t n = rl.getUInt("n", 0);
+  rl.begin("rlog", true);
   uint32_t prevT = rl.getUInt("lastt", 0);
+  rl.end();
   uint32_t now = (uint32_t)time(nullptr);
   uint8_t src = 0;
   pmRead(0x04, &src, 1);                                  // PWR_SRC bit0 = USB
@@ -272,39 +330,15 @@ static void logRefresh(uint8_t kind) {
                    (int16_t)(isnan(curT) ? 0 : lroundf(curT * 100)),
                    (uint16_t)(prevT && now > prevT ? min<uint32_t>((now - prevT) / 60, 65535) : 65535),
                    g_wakeSrc, (uint8_t)((src & 1) | (kind << 1) | (g_usedLightSleep ? 0x10 : 0)) };
-  char key[8];
-  uint32_t blob = (n / RREC_PER_BLOB) % RBLOBS, slot = n % RREC_PER_BLOB;
-  snprintf(key, sizeof key, "r%u", (unsigned)blob);
-  RefreshRec buf[RREC_PER_BLOB] = {};
-  if (slot) rl.getBytes(key, buf, sizeof buf);            // continue the current blob
-  buf[slot] = r;
-  rl.putBytes(key, buf, sizeof buf);
-  rl.putUInt("n", n + 1);
-  rl.putUInt("lastt", now);
-  rl.end();
+  if (ringAppend(RLOGS, &r)) { rl.begin("rlog", false); rl.putUInt("lastt", now); rl.end(); }
 }
 
 static void dumpRefreshLog() {
   static const char* KIND[] = { "dash", "photoB", "photoA", "redraw", "empty", "qr", "?", "?" };
-  Preferences rl;
-  rl.begin("rlog", true);
-  uint32_t n = rl.getUInt("n", 0);
-  // The blob being filled has already overwritten the oldest one, so once the ring has
-  // wrapped only (RBLOBS - 1) full blobs + the current partial one are valid.
-  uint32_t kept = min<uint32_t>(n, (RBLOBS - 1) * RREC_PER_BLOB + n % RREC_PER_BLOB);
   Serial.println("# refresh log");
   Serial.println("n,utc_epoch,local,refresh_ms,transfer_ms,batt_mV,temp_c,mins_since_prev,wake_src,usb,kind,light_sleep");
-  RefreshRec buf[RREC_PER_BLOB];
-  int loaded = -1;
-  for (uint32_t i = n - kept; i < n; ++i) {
-    int blob = (i / RREC_PER_BLOB) % RBLOBS;
-    if (blob != loaded) {
-      char key[8];
-      snprintf(key, sizeof key, "r%d", blob);
-      if (rl.getBytes(key, buf, sizeof buf) != sizeof buf) { loaded = -1; continue; }
-      loaded = blob;
-    }
-    const RefreshRec& r = buf[i % RREC_PER_BLOB];
+  ringForEach(RLOGS, [](uint32_t i, const void* p) {
+    RefreshRec r;  memcpy(&r, p, sizeof r);
     time_t t = r.t;
     struct tm lt;  localtime_r(&t, &lt);
     char loc[24];  strftime(loc, sizeof loc, "%Y-%m-%d %H:%M:%S", &lt);
@@ -312,12 +346,7 @@ static void dumpRefreshLog() {
                   (unsigned long)r.t, loc, r.refreshMs, r.transferMs, r.batt_mV,
                   r.temp_cC / 100.0f, r.minsSincePrev, r.wakeSrc, r.flags & 1,
                   KIND[(r.flags >> 1) & 7], (r.flags >> 4) & 1);
-  }
-  rl.end();
-  nvs_stats_t st;
-  if (nvs_get_stats(nullptr, &st) == ESP_OK)
-    Serial.printf("# NVS entries: used %u, free %u, total %u\n", (unsigned)st.used_entries,
-                  (unsigned)st.free_entries, (unsigned)st.total_entries);
+  });
   Serial.println("# end refresh log");
 }
 
@@ -325,30 +354,22 @@ static void battLogAppend(uint32_t t, uint16_t mV, int16_t cC) {
   // refreshMs: the panel's REFRESH time at the most recent refresh — so a change
   // like 14.4 s -> 26.7 s (Lesson 06) shows up in the log with its date.
   BattEntry e = { t, mV, cC, prefs.isKey("lastref") ? prefs.getUShort("lastref") : (uint16_t)0 };
-  uint32_t n = prefs.getUInt("n", 0);
-  char key[8];
-  snprintf(key, sizeof key, "b%u", (unsigned)(n % BATT_LOG));
-  prefs.putBytes(key, &e, sizeof e);
-  prefs.putUInt("n", n + 1);
+  if (!ringAppend(BLOG, &e)) Serial.println("battery log: NOT saved (NVS full)");
 }
 
 static void dumpSyncLog();   // defined further down; declared here so LOG can call it
 
 static void dumpLog() {
-  uint32_t n = prefs.getUInt("n", 0), kept = min<uint32_t>(n, BATT_LOG);
   Serial.println("# battery log (hourly, NVS)");
   Serial.println("n,utc_epoch,local,batt_mV,temp_c,refresh_ms");
-  for (uint32_t i = n - kept; i < n; ++i) {
-    char key[8];
-    snprintf(key, sizeof key, "b%u", (unsigned)(i % BATT_LOG));
-    BattEntry e;
-    if (prefs.getBytes(key, &e, sizeof e) != sizeof e) continue;
+  ringForEach(BLOG, [](uint32_t i, const void* p) {
+    BattEntry e;  memcpy(&e, p, sizeof e);
     time_t t = e.t;
     struct tm lt;  localtime_r(&t, &lt);
     char loc[24];  strftime(loc, sizeof loc, "%Y-%m-%d %H:%M:%S", &lt);
     Serial.printf("%lu,%lu,%s,%u,%.2f,%u\n", (unsigned long)i + 1, (unsigned long)e.t, loc,
                   e.batt_mV, e.temp_cC / 100.0f, e.refreshMs);
-  }
+  });
   Serial.printf("# wakes %lu, refreshes %lu, last wake awake %u ms\n",
                 (unsigned long)st.wakes, (unsigned long)st.refreshes, st.lastAwakeMs);
   Serial.printf("# timer arm retries %u, fallbacks to deep sleep %u, power-off failures %lu\n",
@@ -358,6 +379,11 @@ static void dumpLog() {
   Serial.printf("# battery protection: PMIC cut-off 0x%02X (%.3f V), low streak %u, "
                 "empty streak %u, simulated V %.2f\n", lvp, 2.0f + lvp * 0.00781f,
                 st.lowStreak, st.emptyStreak, prefs.isKey("simv") ? prefs.getFloat("simv", 0) : 0.0f);
+  nvs_stats_t ns;
+  if (nvs_get_stats(nullptr, &ns) == ESP_OK)
+    Serial.printf("# NVS entries: used %u, available %u (warn below %d), total %u\n",
+                  (unsigned)ns.used_entries, (unsigned)ns.available_entries, NVS_LOW,
+                  (unsigned)ns.total_entries);
   dumpSyncLog();
 }
 
@@ -401,8 +427,8 @@ static void wifiCommand(const String& line) {
 }
 
 // ---- NTP sync (Lesson 05 Part 3) ----
-struct SyncEntry { uint32_t t; int32_t offsetMs; uint16_t connectMs, sntpMs; int8_t rssi; };
-static constexpr int SYNC_LOG = 30;
+struct __attribute__((packed)) SyncEntry { uint32_t t; int32_t offsetMs; uint16_t connectMs, sntpMs; int8_t rssi; };
+static constexpr RingLog SLOG = { "slog", sizeof(SyncEntry), 10, 4 };   // >= 30 syncs
 static volatile bool sntpDone = false;
 static void onSntpSync(struct timeval*) { sntpDone = true; }
 
@@ -431,14 +457,14 @@ static bool wifiUp(uint16_t& connectMs, int8_t& rssi) {
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) delay(50);
   connectMs = millis() - t0;
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.printf("wifi: \"%s\" failed after %u ms: %s\n", ssid.c_str(), connectMs,
+    Serial.printf("wifi: connect failed after %u ms: %s\n", connectMs,
                   wifiStatusName(WiFi.status()));
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
     return false;
   }
   rssi = WiFi.RSSI();
-  Serial.printf("wifi: connected to \"%s\" in %u ms (%d dBm)\n", ssid.c_str(), connectMs, rssi);
+  Serial.printf("wifi: connected in %u ms (%d dBm)\n", connectMs, rssi);   // no name: logs get shared
   return true;
 }
 
@@ -496,14 +522,10 @@ static bool ntpSyncOnline(uint16_t connectMs, int8_t rssi) {
   tzset();
 
   if (ok) {                                   // history in its own NVS namespace
+    SyncEntry e = { (uint32_t)time(nullptr), offsetMs, connectMs, sntpMs, rssi };
+    ringAppend(SLOG, &e);
     Preferences sp;
     sp.begin("sync", false);
-    uint32_t n = sp.getUInt("n", 0);
-    SyncEntry e = { (uint32_t)time(nullptr), offsetMs, connectMs, sntpMs, rssi };
-    char key[8];
-    snprintf(key, sizeof key, "s%u", (unsigned)(n % SYNC_LOG));
-    sp.putBytes(key, &e, sizeof e);
-    sp.putUInt("n", n + 1);
     sp.putUInt("last", e.t);
     sp.end();
   }
@@ -546,7 +568,6 @@ static bool wxLocation(float& lat, float& lon) {
 static bool wxFetchOnline() {
   float lat, lon;
   if (!wxLocation(lat, lon)) { Serial.println("weather: no location (LOC <lat> <lon>)"); return false; }
-  { Preferences x; x.begin("wx", false); x.putUInt("try", (uint32_t)time(nullptr)); x.end(); }
   uint32_t t0 = millis();
   WxData d;
   String err;
@@ -556,8 +577,9 @@ static bool wxFetchOnline() {
   }
   Preferences x;
   x.begin("wx", false);
-  x.putBytes("d", &d, sizeof d);
+  bool saved = x.putBytes("d", &d, sizeof d) == sizeof d;
   x.end();
+  if (!saved) { Serial.println("weather: fetched but NOT saved (NVS full)"); return false; }
   Serial.printf("weather: OK in %lu ms - today %s, %.1f / %.1f C, rain %u%%\n",
                 (unsigned long)(millis() - t0), Weather::describe(d.dayCode),
                 d.dayMax_c10 / 10.0f, d.dayMin_c10 / 10.0f, d.dayRain);
@@ -587,23 +609,16 @@ static void wxPrint() {
 }
 
 static void dumpSyncLog() {
-  Preferences sp;
-  sp.begin("sync", true);
-  uint32_t n = sp.getUInt("n", 0), kept = min<uint32_t>(n, SYNC_LOG);
   Serial.println("# NTP sync log");
   Serial.println("n,utc_epoch,local,offset_ms,connect_ms,sntp_ms,rssi_dbm");
-  for (uint32_t i = n - kept; i < n; ++i) {
-    char key[8];
-    snprintf(key, sizeof key, "s%u", (unsigned)(i % SYNC_LOG));
-    SyncEntry e;
-    if (sp.getBytes(key, &e, sizeof e) != sizeof e) continue;
+  ringForEach(SLOG, [](uint32_t i, const void* p) {
+    SyncEntry e;  memcpy(&e, p, sizeof e);
     time_t t = e.t;
     struct tm lt;  localtime_r(&t, &lt);
     char loc[24];  strftime(loc, sizeof loc, "%Y-%m-%d %H:%M:%S", &lt);
     Serial.printf("%lu,%lu,%s,%ld,%u,%u,%d\n", (unsigned long)i + 1, (unsigned long)e.t, loc,
                   (long)e.offsetMs, e.connectMs, e.sntpMs, e.rssi);
-  }
-  sp.end();
+  });
 }
 
 // ---- Photos from the SD card (Lesson 06) ----
@@ -1033,6 +1048,41 @@ static void setHardwareCutoff() {
   Serial.println("warning: could not set the PMIC low-voltage cut-off");
 }
 
+// One-time move to the packed logs (Lesson 08 fix): the old per-record keys are what
+// filled NVS. Refresh log: cleared (the investigation is over, data in docs/data).
+// Sync log: copied over (drift history). Battery log: cleared by the fresh boot anyway.
+static void migrateLogs() {
+  Preferences v;
+  v.begin("sys", false);
+  if (v.getUChar("logv", 1) >= 2) { v.end(); return; }
+  { Preferences r; r.begin("rlog", false); r.clear(); r.end(); }
+  Preferences sp;
+  sp.begin("sync", false);
+  uint32_t n = sp.getUInt("n", 0), kept = min<uint32_t>(n, 30);
+  SyncEntry recs[30];
+  int got = 0;
+  for (uint32_t i = n - kept; i < n; ++i) {
+    char key[8];
+    snprintf(key, sizeof key, "s%u", (unsigned)(i % 30));
+    struct { uint32_t t; int32_t offsetMs; uint16_t connectMs, sntpMs; int8_t rssi; } old;   // unpacked, 16 B
+    if (sp.getBytes(key, &old, sizeof old) == sizeof old)
+      recs[got++] = { old.t, old.offsetMs, old.connectMs, old.sntpMs, old.rssi };
+    sp.remove(key);
+  }
+  sp.remove("n");
+  sp.end();
+  for (int i = 0; i < got; ++i) ringAppend(SLOG, &recs[i]);   // after the removals: space
+  for (int i = 0; i < 120; ++i) {                               // old battery-log keys
+    char key[8];
+    snprintf(key, sizeof key, "b%d", i);
+    if (prefs.isKey(key)) prefs.remove(key);
+  }
+  v.putUChar("logv", 2);
+  v.end();
+  Serial.printf("logs: moved to packed NVS logs (%d syncs kept); NVS available %d entries\n",
+                got, nvsAvailable());
+}
+
 void setup() {
   pinMode(PIN_AUDIO_PWR_EN, OUTPUT);  digitalWrite(PIN_AUDIO_PWR_EN, LOW);
   pinMode(PIN_SPK_EN, OUTPUT);        digitalWrite(PIN_SPK_EN, LOW);
@@ -1088,9 +1138,11 @@ void setup() {
     st.minT_cC = INT16_MAX;
     st.maxT_cC = INT16_MIN;
     prefs.clear();                       // new run: new battery log
+    Preferences b; b.begin(BLOG.ns, false); b.clear(); b.end();
   }
   ++st.wakes;
 
+  migrateLogs();
   float battV = M5.Power.getBatteryVoltage() / 1000.0f;   // measure before refreshing
 
   // ---- battery protection ----
@@ -1140,7 +1192,12 @@ void setup() {
     bool haveCreds = w.isKey("ssid");
     w.end();
     bool syncNow = haveCreds && due && retryOk && !lowBatt;
-    if (syncNow) sp.putUInt("try", (uint32_t)now);
+    // Save the attempt time BEFORE trying; if it can't be saved (NVS full), don't try:
+    // "last"/"try" would never change and every 2-min wake would join Wi-Fi again.
+    if (syncNow && !sp.putUInt("try", (uint32_t)now)) {
+      Serial.println("auto-sync skipped: NVS full");
+      syncNow = false;
+    }
     sp.end();
 
     // Weather (Lesson 08): hourly (>= 55 min since the last good fetch), 15 min after a
@@ -1154,6 +1211,15 @@ void setup() {
     x.end();
     bool wxNow = haveCreds && !lowBatt && wxLocation(lat, lon) &&
                  (time_t)(now - wd.fetchedAt) >= 3300 && (time_t)(now - wxTry) >= 900;
+    if (wxNow) {                                   // same rule as the sync's "try"
+      Preferences xw;
+      xw.begin("wx", false);
+      if (!xw.putUInt("try", (uint32_t)now)) {
+        Serial.println("weather skipped: NVS full");
+        wxNow = false;
+      }
+      xw.end();
+    }
 
     if (syncNow || wxNow) {
       uint32_t s0 = millis();

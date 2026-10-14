@@ -7,7 +7,7 @@ updated and how much battery is left — plus **pages** stepped through with a b
 dashboard, a **Wi-Fi login QR code**, and the photos from Lesson 07.
 
 > Audience note: Python / CircuitPython background, learning C++.
-> **Status:** complete. Firmware: `stages/lesson8_final.cpp` (= `src/main.cpp`).
+> **Status:** complete. Firmware: `stages/lesson8_nvs_fix.cpp` (= `src/main.cpp`).
 >
 > **Privacy:** the Wi-Fi password is in the QR code. It is built on the board from the
 > credentials already in NVS, and is never printed, logged, screenshotted or committed.
@@ -260,6 +260,55 @@ The Lesson 06 experiments are finished, so their commands are gone from the firm
 state), `REDRAW`. Their code is kept in `stages/lesson6_*.cpp`. The header of `main.cpp`,
 still describing Lesson 04, now describes the current firmware and lists every command.
 
+## Part 6 — Three days later: the weather stopped (NVS full)
+
+**Symptom:** after almost 3 days the hourly weather stopped changing.
+
+**Evidence first** (USB plug-in → service window, no page change; `LOG`, `WEATHER`, `RLOG`):
+
+```
+weather: OK in 470 ms ...                               <- the fetch WORKED
+putBytes(): nvs_set_blob fail: d NOT_ENOUGH_SPACE       <- but couldn't be saved
+putUInt():  nvs_set_u32 fail: try NOT_ENOUGH_SPACE
+weather: fetched 2026-10-14 00:31 (484 min ago)         <- the last save that fitted
+# NVS entries: used 504, free 126, total 630
+```
+
+NVS (the settings store, Lesson 04) is a 20 KB partition: 5 pages × 126 entries of 32
+bytes, with one page always kept free for reorganising — **504 usable entries**. It was
+completely full. The battery log had stopped at entry 60 (00:46), the refresh log on 12 Oct.
+
+**Why:** each log record was its own key, and every key costs overhead — a 10-byte
+battery record took **3 entries** (blob index + chunk header + data). At full size the logs
+alone needed ~572 entries: more than all of NVS. A fresh boot clears the battery log, which
+hid the problem; after Lesson 08's restarts it grew for ~62 hours (186 entries) into what
+the refresh log and everything else had left.
+
+**A second problem hiding behind it:** the weather's "last attempt" time couldn't be saved
+either, so every 2-minute wake thought the weather was due and **joined Wi-Fi** — about 240
+extra connections overnight, on battery.
+
+**The fix:**
+
+| | Before | After |
+|---|---|---|
+| Log format | one key per record | records **packed into blobs**, one key per blob (`ringAppend` / `ringForEach`) |
+| Refresh log | 192 records, 122 entries | 48–64 records, 42 entries (the investigation is over) |
+| Battery log (120 h) | 360 entries | 67 entries |
+| Sync log (30 days) | 90 entries | 29 entries (history migrated) |
+| Attempt time can't be saved | tries anyway, every wake | **doesn't try** (sync and weather) |
+| Forecast can't be saved | silent | `weather: fetched but NOT saved (NVS full)` |
+| Running low | invisible | `LOG` prints NVS use; footer shows **STORAGE FULL** below 40 free |
+
+**Result:** `used 200, available 304` straight after the migration; the 9 sync records came
+across intact; the weather saved at 08:45. At full size the logs now need ~138 entries.
+
+> **Lesson:** a log that runs for days needs a **storage budget on paper** — entries per
+> record × records kept, for every log, against what the store really holds (here 504, not
+> 630) — and a write that fails must change behaviour (and be visible), never just be
+> ignored. Also: the firmware printed the Wi-Fi network name on every connect, and it ended
+> up in a captured log. It no longer prints it.
+
 ## Command cheat-sheet (new in this lesson)
 
 | Command | What |
@@ -281,7 +330,8 @@ still describing Lesson 04, now describes the current firmware and lists every c
 | `stages/lesson8_weather.cpp` | Part 2: hourly weather in NVS |
 | `stages/lesson8_dashboard.cpp` | Part 3: the new layout |
 | `stages/lesson8_pages.cpp` | Part 4: pages and the QR code |
-| `stages/lesson8_final.cpp` | Part 5: experiments removed (= `src/main.cpp`) |
+| `stages/lesson8_final.cpp` | Part 5: experiments removed |
+| `stages/lesson8_nvs_fix.cpp` | Part 6: packed NVS logs, save guards, storage warning (= `src/main.cpp`) |
 
 ## Glossary
 

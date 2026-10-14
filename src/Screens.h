@@ -17,6 +17,7 @@ struct DashInfo {
   bool   usb;            // 5 V present (charging)
   bool   lowBatt;        // red banner
   bool   haveWx;
+  bool   storageLow;     // NVS nearly full: logs/weather can't be saved
   WxData wx;
 };
 
