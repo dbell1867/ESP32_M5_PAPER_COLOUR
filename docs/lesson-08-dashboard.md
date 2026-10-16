@@ -303,6 +303,13 @@ extra connections overnight, on battery.
 **Result:** `used 200, available 304` straight after the migration; the 9 sync records came
 across intact; the weather saved at 08:45. At full size the logs now need ~138 entries.
 
+**Two days later (16 Oct, `docs/data/battery-2026-10-16.csv`):** `used 262, available 242`.
+The growth (+62 entries) matches the budget exactly: refresh log now full (+30), battery log
+49 hours in 5 blobs (+24), sync log 11 records in 2 blobs (+7). Still to grow: battery log
+to 11 blobs (+36), sync log to 4 (+14) → about **312 used, ~190 available** for good. The
+battery log is unbroken (49 hourly rows), the clock synced daily, the weather was 17 min
+old, and the battery fell ~0.9 mV/h (4.126 → 4.087 V in 42 h) — no sign of the Wi-Fi storm.
+
 > **Lesson:** a log that runs for days needs a **storage budget on paper** — entries per
 > record × records kept, for every log, against what the store really holds (here 504, not
 > 630) — and a write that fails must change behaviour (and be visible), never just be
