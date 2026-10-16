@@ -51,7 +51,13 @@ void sun(int cx, int cy, int r) {
   for (int pass = 0; pass < 2; ++pass) {
     uint32_t ink = pass ? INK_YELLOW : INK_BLACK;
     int e = pass ? 0 : g;
-    for (int i = 0; i < 8; ++i) ray(cx, cy, i * PI / 4, r * 1.3f - e, r * 1.8f + e, h + e, ink);
+    // A diagonal outline is a staircase and looks about 1 px heavier than a straight one,
+    // so the four straight rays get 1 px more outline on their SIDES (not the ends:
+    // that keeps the gap to the disc).
+    for (int i = 0; i < 8; ++i) {
+      float side = e + ((pass == 0 && i % 2 == 0) ? 1 : 0);
+      ray(cx, cy, i * PI / 4, r * 1.3f - e, r * 1.8f + e, h + side, ink);
+    }
     D.fillCircle(cx, cy, r + e, ink);
   }
 }

@@ -182,6 +182,12 @@ that the panel prints as **green** — 1,824 green pixels on the sheet. The rays
 of filled triangles and the fog bars rounded rectangles, every pixel exactly one ink: 0
 green pixels. Rule: on a six-ink panel, draw with **filled shapes**, not smoothed lines.
 
+**…and even weight (16 Oct, checked on the glass).** The outlines looked lighter on the
+straight rays than on the diagonals. In the pixel map both are 1 px, but a diagonal edge is
+a staircase (`##` steps), so it puts down about twice the black. The four straight rays now
+get 1 px more outline on their sides only (the ends unchanged, keeping the gap to the disc):
+small suns 2 px, big sun 3 px. On the panel the outlines now look even.
+
 ### Battery percentage
 
 A LiPo's voltage isn't linear in charge: it drops fast near full, sits around 3.7–3.9 V for
