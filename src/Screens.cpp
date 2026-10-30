@@ -154,7 +154,10 @@ void battery(int x, int y, int pct, bool usb) {        // 46 x 22 body + nub, ri
   D.fillRect(bx + bw, y + 6, 4, bh - 12, INK_BLACK);
   uint32_t ink = pct > 50 ? INK_GREEN : (pct > 20 ? INK_YELLOW : INK_RED);
   int fw = (bw - 8) * pct / 100;
-  if (fw > 0) D.fillRect(bx + 4, y + 4, fw, bh - 8, ink);
+  if (fw > 0) {                                        // outlined: yellow on white has no visible edge
+    D.drawRect(bx + 3, y + 3, fw + 2, bh - 6, INK_BLACK);
+    D.fillRect(bx + 4, y + 4, fw, bh - 8, ink);
+  }
   if (usb) {                                           // a small bolt: charging from USB
     int cx = bx + bw / 2, cy = y + 3;
     D.fillTriangle(cx + 4, cy, cx - 5, cy + 9, cx + 1, cy + 9, INK_BLACK);
