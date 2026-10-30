@@ -19,8 +19,8 @@
 // Battery: < 3.50 V twice -> red banner, 30 min refreshes; < 3.30 V twice -> "Battery
 // empty" once and off with no timer; the PMIC's own cut-off is raised to 3.10 V.
 //
-// Power button or USB plug-in -> 30 s service window; reset after a flash -> 20 s flash
-// window. Commands (tools/service.py):
+// Power button or USB plug-in -> 30 s service window (on USB, or while SIMV is set);
+// reset after a flash -> 20 s flash window. Commands (tools/service.py):
 //   LOG  RLOG  SYNCLOG             battery/wake log, refresh log, clock-sync log
 //   WEATHER  WXNOW  LOC <lat> <lon> show / fetch now / set the weather location
 //   SCAN  SYNC  SYNCDUE            Wi-Fi scan, sync the clock now, make a sync due
@@ -1297,7 +1297,8 @@ void setup() {
   if (fresh && !pmicPowerOn) {
     Serial.println("dev boot: flash window; send LOG to dump");
     serialWindow(FLASH_WINDOW_MS);
-  } else if (serviceWake && onUsb) {     // the window is for the tools: USB only
+  } else if (serviceWake && (onUsb || simV > 0)) {   // the window is for the tools: USB only,
+                                                     // or SIMV (it pretends USB is off)
     M5.Led.setColor(0, 0, 0, 255);  M5.Led.display();
     Serial.println("power-button/USB wake: 30 s service window; send LOG to dump");
     serialWindow(SERVICE_MS);
