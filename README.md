@@ -21,8 +21,9 @@ An e-paper **house dashboard** that runs for weeks on the internal battery:
   moves ≥ 0.5 °C
 - between updates the board is **fully off** — the power chip (M5PM1) cuts everything
   except itself and the RTC, and its timer switches the board back on every 2 minutes
-- the **power button** steps through pages: dashboard → **Wi-Fi QR code** (phones join
-  by scanning it) → each photo → dashboard; a page stays until the next press
+- the **power button** wakes it for 30 s, then side buttons **A / B** step forward / back
+  through pages: dashboard → **Wi-Fi QR code** (phones join by scanning it) → each photo
+  → dashboard; a page stays until stepped away from
 - plug in USB (or press the button) for a 30 s window to download the logs over serial
 - **keeps its own clock right:** once a day it joins Wi-Fi for a few seconds, fetches
   network time (NTP), records how far the RTC had drifted, and corrects it
@@ -110,7 +111,7 @@ Libraries (pinned in `platformio.ini`): M5Unified 0.2.24, M5GFX 0.2.31, ArduinoJ
 8. **[A dashboard for the house](docs/lesson-08-dashboard.md)** — hourly weather from
    Open-Meteo over verified HTTPS (two pinned roots), drawing split into `Screens.cpp`,
    icons from circles and lines, battery %, screenshots without the panel (`SHOT`), and
-   pages on the power button: dashboard → Wi-Fi QR code → photos.
+   pages: dashboard → Wi-Fi QR code → photos (power button, then side buttons A/B).
 
 ## Tools
 

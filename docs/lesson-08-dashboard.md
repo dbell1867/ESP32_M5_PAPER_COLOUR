@@ -214,6 +214,9 @@ Several layout rounds took minutes instead of an afternoon, and the one change y
 
 ## Part 4 — Pages and the power button
 
+> **Changed 30 Oct (Part 7):** the power button now only opens a window; side buttons A/B
+> step the pages in it. The reasoning below still explains why the power button comes first.
+
 ### Why the power button
 
 In L1 standby the ESP32 is **completely off**; only the M5PM1 power chip is alive. The
@@ -321,6 +324,47 @@ old, and the battery fell ~0.9 mV/h (4.126 → 4.087 V in 42 h) — no sign of t
 > 630) — and a write that fails must change behaviour (and be visible), never just be
 > ignored. Also: the firmware printed the Wi-Fi network name on every connect, and it ended
 > up in a captured log. It no longer prints it.
+
+## Part 7 — Update 30 Oct: two weeks on, pages on the side buttons
+
+**Two weeks unattended (`docs/data/battery-2026-10-30.csv`):** `used 305, available 199`:
+NVS settled where Part 6 budgeted. 16.6 days on one charge, 4.23 → 3.73 V (~30 mV/day),
+battery log unbroken; 10 004 wakes, 2 015 refreshes, 1 timer-arm retry, 0 fallbacks, 0
+failed power-offs; 26 daily clock syncs in a row, including the 25 Oct change from BST to
+GMT. The battery log keeps ~5 days, so pull it at least that often (16–25 Oct was lost).
+
+Three quick fixes followed.
+
+**1. Pages on the side buttons.** The power button no longer steps pages. A press only
+wakes the board and opens the 30 s window (blue blink) **without refreshing**, so the
+buttons answer at once; in the window side button **A** shows the next page and **B** the
+previous one. Each step refreshes (red LED, 15–25 s) and restarts the window; presses
+during a refresh are dropped. The power button still has to come first: Part 4's reason
+stands (A/B are ESP32 pins, and the ESP32 is off in L1). Deep sleep (L2) would let A/B
+wake the board directly, but at ~38 mA instead of ~3 mA: a day or two per charge.
+
+| | Before | After |
+|---|---|---|
+| Power button | next page (refresh, then the window if on USB) | opens the window only, on battery too |
+| Side button A / B | nothing | next / previous page, while the window is open |
+| Low battery | dashboard only | unchanged: no paging |
+| Window on battery | none | 30 s after a power-button press |
+
+`prevPage()` mirrors `nextPage()`; `serialWindow()` takes an optional step callback and
+polls G10/G9 for a HIGH → LOW edge (a button held when the window opens doesn't count).
+**Result:** power → A (QR) → A (photo) → B (QR) → off 30 s after the last step.
+
+**2. Battery gauge outline.** The yellow fill (21–50 %) had no visible edge on white, so the
+level was hard to read. The fill now has a 1 px black outline, in every colour, inside a
+1 px white gap. Checked on the glass at `SIMV 3.80`.
+
+**3. The service window while `SIMV` is set.** `SIMV` pretends USB is off, and the window
+only opened on USB, so after `SIMV 3.80` a button wake gave no window and `SIMV 0` could
+only be sent after a reset. The window now also opens while `SIMV` is set. **Result:**
+`SIMV 3.80`, button → window → `SIMV 0` cleared.
+
+> **Lesson:** a test hook that changes what the board believes (here "on USB") must not
+> also switch off the way you undo it.
 
 ## Command cheat-sheet (new in this lesson)
 
