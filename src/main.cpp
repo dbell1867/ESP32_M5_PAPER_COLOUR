@@ -11,16 +11,18 @@
 //   - DASHBOARD (Screens.cpp): date, room temp + RH, today's weather, next 5 hours,
 //     updated time, battery %. Redrawn every 10 min (sooner if the room changes
 //     by 0.5 C), every 30 min on low battery.
-//   - POWER BUTTON (the only button that wakes the board from L1): next page —
-//     dashboard -> Wi-Fi QR -> each photo in flash -> dashboard. Pages other than the
-//     dashboard stay up until the next press.
+//   - POWER BUTTON (the only button that wakes the board from L1): opens a 30 s window
+//     in which side button A shows the next page and B the previous one — dashboard ->
+//     Wi-Fi QR -> each photo in flash -> dashboard. Each step restarts the window.
+//     Pages other than the dashboard stay up until stepped away from.
 // Network, one Wi-Fi connection per wake at most: weather hourly (Open-Meteo, verified
 // HTTPS), clock daily (NTP). Neither on low battery.
 // Battery: < 3.50 V twice -> red banner, 30 min refreshes; < 3.30 V twice -> "Battery
 // empty" once and off with no timer; the PMIC's own cut-off is raised to 3.10 V.
 //
-// Power button or USB plug-in -> 30 s service window (on USB, or while SIMV is set);
-// reset after a flash -> 20 s flash window. Commands (tools/service.py):
+// Power button -> 30 s service window (also the paging window); USB plug-in -> the same
+// window (on USB, or while SIMV is set); reset after a flash -> 20 s flash window.
+// Commands (tools/service.py):
 //   LOG  RLOG  SYNCLOG             battery/wake log, refresh log, clock-sync log
 //   WEATHER  WXNOW  LOC <lat> <lon> show / fetch now / set the weather location
 //   SCAN  SYNC  SYNCDUE            Wi-Fi scan, sync the clock now, make a sync due
@@ -42,6 +44,7 @@
 #include "esp_sntp.h"
 #include <time.h>
 #include <sys/time.h>
+#include <functional>
 #include "nvs.h"            // nvs_get_stats (refresh-log space check)
 #include "soc/gpio_reg.h"   // GPIO_IN_REG for the ISR-safe BUSY read
 #include "driver/gpio.h"    // light-sleep wake on BUSY
@@ -776,7 +779,8 @@ static void resetPanel() {
   M5.Display.wakeup();     // Panel_ED2208::setSleep(false) -> _init_sequence()
 }
 
-// ---- pages (Lesson 08): the power button steps Dashboard -> Wi-Fi QR -> photos -> ...
+// ---- pages (Lesson 08): side buttons A/B step Dashboard <-> Wi-Fi QR <-> photos <-> ...
+// in the window a power-button press opens.
 // Stored in NVS "dash"/"page": 0 = dashboard, 1 = Wi-Fi QR, 2+i = i-th photo in flash
 // (alphabetical), PAGE_MANUAL = a photo put up with SHOW. Non-dashboard pages stay up
 // (no scheduled redraws) until the next press; low battery returns to the dashboard.
@@ -828,6 +832,17 @@ static uint8_t nextPage(uint8_t cur, int nPhotos, bool haveWifi) {
   return PAGE_DASH;
 }
 
+// The page before `cur`: the same cycle backwards (dashboard -> last photo -> ... -> QR).
+static uint8_t prevPage(uint8_t cur, int nPhotos, bool haveWifi) {
+  if (cur == PAGE_MANUAL) return PAGE_DASH;
+  int p = cur == PAGE_DASH ? PAGE_PHOTO0 + nPhotos : cur;
+  for (--p; p > PAGE_DASH; --p) {
+    if (p == PAGE_QR && !haveWifi) continue;
+    return (uint8_t)p;
+  }
+  return PAGE_DASH;
+}
+
 // Draw a non-dashboard page and refresh the panel. Returns false if it couldn't.
 static bool showPage(uint8_t page, const String* photos, int nPhotos) {
   if (page == PAGE_QR) {
@@ -870,10 +885,24 @@ static void shotDashboard(bool icons = false) {
   Serial.setTxTimeoutMs(0);
 }
 
-static void serialWindow(uint32_t ms) {
+// onStep (a power-button wake): side button A = onStep(+1), B = onStep(-1); the window
+// restarts after each step. Presses during a step's refresh are dropped.
+static void serialWindow(uint32_t ms, const std::function<void(int)>& onStep = nullptr) {
   uint32_t t0 = millis();
   String line;
+  if (onStep) { pinMode(PIN_BTN_A, INPUT); pinMode(PIN_BTN_B, INPUT); }   // external pull-ups
+  bool upA = digitalRead(PIN_BTN_A), upB = digitalRead(PIN_BTN_B);        // held at start: no press
   while (millis() - t0 < ms) {
+    if (onStep) {
+      bool a = digitalRead(PIN_BTN_A), b = digitalRead(PIN_BTN_B);
+      int dir = (upA && !a) ? 1 : (upB && !b) ? -1 : 0;               // press = HIGH -> LOW
+      upA = a;  upB = b;
+      if (dir) {
+        onStep(dir);
+        t0 = millis();
+        upA = digitalRead(PIN_BTN_A);  upB = digitalRead(PIN_BTN_B);
+      }
+    }
     while (Serial.available()) {
       char c = Serial.read();
       if (c == '\n') {
@@ -939,8 +968,7 @@ static void serialWindow(uint32_t ms) {
       else if (c != '\r') line += c;
     }
     // Blink LED 0 blue the whole time the window is open: "awake and listening".
-    // (A steady LED was easy to miss, and a long silent wait invited a second
-    // button press — which ends photo mode.)
+    // (A steady LED was easy to miss.) It pauses while a page step refreshes (red).
     static uint32_t lastBlink = 0;
     static bool blinkOn = false;
     if (millis() - lastBlink >= 400) {
@@ -1249,35 +1277,18 @@ void setup() {
     st.lastBattLogAt = (uint32_t)now;
   }
 
-  // Pages (Lesson 08): a power-button press steps to the next page; a non-dashboard
-  // page stays up (no scheduled redraws) until the next press. Low battery always
-  // returns to the dashboard: its warnings matter more. A USB plug-in doesn't step.
+  // Pages (Lesson 08): a power-button press opens a window in which side button A steps
+  // to the next page and B to the previous one (A/B can't wake the board from L1). The
+  // press itself changes nothing and refreshes nothing, so the buttons answer at once.
+  // A non-dashboard page stays up (no scheduled redraws) until stepped away from. Low
+  // battery always returns to the dashboard: its warnings matter more.
   uint8_t page = prefs.isKey("page") ? prefs.getUChar("page") : PAGE_DASH;
   bool pressed = pmicPowerOn && (wake & WAKE_PWRBTN);
+  bool paging  = pressed && !lowBatt && !fresh;
   if (fresh || lowBatt) page = PAGE_DASH;
-  if (pressed && !lowBatt) {
-    static String photos[24];
-    int nPhotos = flashPhotos(photos, 24);
-    String s1, s2;
-    bool haveWifi = wifiQrText(s1, s2);
-    s2 = "";
-    uint8_t want = nextPage(page, nPhotos, haveWifi);
-    if (want != PAGE_DASH && !showPage(want, photos, nPhotos)) want = PAGE_DASH;
-    page = want;
-  }
   prefs.putUChar("page", page);
 
-  char why = 0;
-  if (fresh)                                                       why = 'B';
-  else if (pressed)                                                why = page == PAGE_DASH ? 'P' : 0;
-  else if (page != PAGE_DASH)                                      why = 0;   // keep the page
-  else if (serviceWake)                                            why = 'P'; // plug-in
-  else if (now - (time_t)st.lastRefreshAt >=
-           (time_t)(lowBatt ? REFRESH_EVERY_LOW_S : REFRESH_EVERY_S)) why = 'S';
-  else if (!lowBatt && (st.shownT_cC == INT16_MIN ||                // no early refreshes
-           abs(cC - st.shownT_cC) >= (int)(EARLY_DELTA_C * 100)))   why = 'E'; // when low
-
-  if (why) {
+  auto refreshDash = [&]() {
     drawScreen(battV, lowBatt);
     M5.Led.setColor(1, 255, 0, 0);  M5.Led.display();
     timedDisplay("dashboard");
@@ -1287,7 +1298,20 @@ void setup() {
     ++st.refreshes;
     st.shownT_cC = cC;
     st.lastRefreshAt = (uint32_t)now;
-  }
+  };
+
+  char why = 0;
+  if (fresh)                                                       why = 'B';
+  else if (paging)                                                 why = 0;   // buttons first
+  else if (pressed)                                                why = 'P'; // low battery
+  else if (page != PAGE_DASH)                                      why = 0;   // keep the page
+  else if (serviceWake)                                            why = 'P'; // plug-in
+  else if (now - (time_t)st.lastRefreshAt >=
+           (time_t)(lowBatt ? REFRESH_EVERY_LOW_S : REFRESH_EVERY_S)) why = 'S';
+  else if (!lowBatt && (st.shownT_cC == INT16_MIN ||                // no early refreshes
+           abs(cC - st.shownT_cC) >= (int)(EARLY_DELTA_C * 100)))   why = 'E'; // when low
+
+  if (why) refreshDash();
 
   Serial.printf("wake #%lu (%s, WAKE_SRC 0x%02X, reset %d): T %.2f batt %.2f V%s%s %s\n",
                 (unsigned long)st.wakes,
@@ -1297,6 +1321,26 @@ void setup() {
   if (fresh && !pmicPowerOn) {
     Serial.println("dev boot: flash window; send LOG to dump");
     serialWindow(FLASH_WINDOW_MS);
+  } else if (paging) {                   // on battery too: the window is for the buttons
+    static String photos[24];
+    int nPhotos = flashPhotos(photos, 24);
+    String s1, s2;
+    bool haveWifi = wifiQrText(s1, s2);
+    s2 = "";
+    auto step = [&](int dir) {
+      uint8_t want = dir > 0 ? nextPage(page, nPhotos, haveWifi) : prevPage(page, nPhotos, haveWifi);
+      Serial.printf("button %c: page %u -> %u\n", dir > 0 ? 'A' : 'B', page, want);
+      M5.Led.setColor(1, 255, 0, 0);  M5.Led.display();
+      if (want != PAGE_DASH && !showPage(want, photos, nPhotos)) want = PAGE_DASH;
+      if (want == PAGE_DASH) refreshDash();
+      M5.Led.setAllColor(0, 0, 0);    M5.Led.display();
+      page = want;
+      prefs.putUChar("page", page);
+    };
+    M5.Led.setColor(0, 0, 0, 255);  M5.Led.display();
+    Serial.println("power-button wake: 30 s service window; A next page, B previous; "
+                   "send LOG to dump");
+    serialWindow(SERVICE_MS, step);
   } else if (serviceWake && (onUsb || simV > 0)) {   // the window is for the tools: USB only,
                                                      // or SIMV (it pretends USB is off)
     M5.Led.setColor(0, 0, 0, 255);  M5.Led.display();
