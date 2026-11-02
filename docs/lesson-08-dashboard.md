@@ -333,7 +333,7 @@ battery log unbroken; 10 004 wakes, 2 015 refreshes, 1 timer-arm retry, 0 fallba
 failed power-offs; 26 daily clock syncs in a row, including the 25 Oct change from BST to
 GMT. The battery log keeps ~5 days, so pull it at least that often (16–25 Oct was lost).
 
-Three quick fixes followed.
+Three quick fixes followed, and a fourth after the next log (2 Nov).
 
 **1. Pages on the side buttons.** The power button no longer steps pages. A press only
 wakes the board and opens the 30 s window (blue blink) **without refreshing**, so the
@@ -365,6 +365,25 @@ only be sent after a reset. The window now also opens while `SIMV` is set. **Res
 
 > **Lesson:** a test hook that changes what the board believes (here "on USB") must not
 > also switch off the way you undo it.
+
+**4. (2 Nov) Plugging in USB opened no window.** The 2½-day log
+(`docs/data/battery-2026-11-02.csv`) was fine: the last day fell ~22 mV, the same as on
+16 Oct at that voltage, so the paging window costs nothing visible. Pulling it was harder.
+The plug-in wake printed `WAKE_SRC 0x02, batt 4.10 V` **without** `(USB)`, did a 26.7 s
+light-sleep refresh (the battery path) and powered off without a window.
+
+**Why:** the M5PM1 sets the VIN wake flag **before** `PWR_SRC` bit 0 (5 V in) goes high,
+and the firmware read `PWR_SRC` at once. The refresh log had shown it on 11 Oct as well: a
+`0x02` wake with `light_sleep=1` (early read: battery) but `usb=1` (read after the
+refresh), then a button wake 18 s later, from someone pressing because nothing opened.
+
+**The fix:** on a VIN wake, poll `PWR_SRC` every 20 ms for up to 2 s before deciding.
+**Result:** unplug, let it sleep, plug in → `WAKE_SRC 0x02 ... (USB)`, 16.0 s refresh,
+service window. Its `USB plug-in: 5 V in seen after N ms` line comes out before the
+computer has opened the port, so the real delay is still unmeasured (under 2 s).
+
+> **Lesson:** a wake flag and a status flag from the same chip aren't necessarily updated
+> together; when one implies the other, wait for the second instead of trusting a single read.
 
 ## Command cheat-sheet (new in this lesson)
 
