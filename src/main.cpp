@@ -1129,8 +1129,17 @@ void setup() {
   M5.Display.setEpdMode(epd_mode_t::epd_fastest);
   M5.Led.setBrightness(40);
   {
-    uint8_t pwr = 0;
-    pmRead(0x04, &pwr, 1);                       // PWR_SRC bit0 = 5 V in (USB)
+    uint8_t pwr = 0, w = 0;
+    pmRead(PM_WAKE_SRC, &w, 1);
+    pmRead(PM_PWR_SRC, &pwr, 1);                 // PWR_SRC bit0 = 5 V in (USB)
+    // A USB plug-in wake (WAKE_SRC VIN) arrives BEFORE PWR_SRC shows 5 V in: read at once,
+    // it said "battery" (11 Oct, 2 Nov) -> no service window. Wait for it, up to 2 s.
+    if ((w & WAKE_VIN) && !(pwr & 1)) {
+      uint32_t t0 = millis();
+      while (!(pwr & 1) && millis() - t0 < 2000) { delay(20); pmRead(PM_PWR_SRC, &pwr, 1); }
+      Serial.printf("USB plug-in: 5 V in %s after %lu ms\n", (pwr & 1) ? "seen" : "NOT seen",
+                    (unsigned long)(millis() - t0));
+    }
     Preferences p; p.begin("ls", true);
     bool force = p.isKey("force") && p.getBool("force", false);
     p.end();
