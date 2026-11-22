@@ -23,7 +23,8 @@
 // Power button -> 30 s service window (also the paging window); USB plug-in -> the same
 // window (on USB, or while SIMV is set); reset after a flash -> 20 s flash window.
 // Commands (tools/service.py):
-//   LOG  RLOG  SYNCLOG             battery/wake log, refresh log, clock-sync log
+//   LOG  RLOG  SYNCLOG  CHARGELOG  battery/wake log (+ sync and charge logs), refresh
+//                                  log, clock-sync log, charge log
 //   WEATHER  WXNOW  LOC <lat> <lon> show / fetch now / set the weather location
 //   SCAN  SYNC  SYNCDUE            Wi-Fi scan, sync the clock now, make a sync due
 //   SSID / PASS / WIFI? / WIFI-    Wi-Fi credentials (use tools/wifi_setup.py)
@@ -360,6 +361,69 @@ static void battLogAppend(uint32_t t, uint16_t mV, int16_t cC) {
   if (!ringAppend(BLOG, &e)) Serial.println("battery log: NOT saved (NVS full)");
 }
 
+// ---- charge log (22 Nov): the charge profile, which the hourly log only sees once an
+// hour. On USB: a sample every wake (2 min) for the first 2 h after plug-in, then every
+// 10 min until 6 h, then none (the charge is long over; this keeps a long plug-in from
+// overwriting its own start). After unplugging: every wake for 30 min, every 10 min
+// until 2 h (the relaxation back to resting voltage). At most ~108 samples per charge;
+// the ring keeps >= 125. Voltage only: the IP2315 charger isn't on I2C, so there's no
+// current or charge-done flag; PWR_SRC is stored raw in case another bit turns out to be.
+// Kept across fresh boots (a flash shouldn't lose a charge). ~60 NVS entries.
+struct __attribute__((packed)) ChargeRec { uint32_t t; uint16_t batt_mV; int16_t temp_cC; uint8_t pwrSrc, wakeSrc; };
+static_assert(sizeof(ChargeRec) == 10, "keep charge records 10 bytes");
+static constexpr RingLog CLOG = { "clog", sizeof(ChargeRec), 25, 6 };   // >= 125 samples
+static constexpr uint32_t CHG_FAST_S = 2 * 3600, CHG_STOP_S = 6 * 3600;   // on USB
+static constexpr uint32_t CHG_RELAX_FAST_S = 1800, CHG_RELAX_STOP_S = 2 * 3600;   // after
+static constexpr uint32_t CHG_SLOW_EVERY_S = 600;
+static constexpr uint32_t CHG_NEW_SESSION_S = 600;   // off USB this long = a new plug-in
+
+struct __attribute__((packed)) ChargeMeta { uint32_t start, lastUsb, lastRec; };
+
+static void chargeLogMaybe(uint32_t now, bool onUsb, uint16_t mV, int16_t cC,
+                           uint8_t pwrSrc, uint8_t wakeSrc) {
+  if (now < 1700000000) return;                     // no valid clock: times would be junk
+  ChargeMeta m = {};
+  Preferences c;
+  c.begin(CLOG.ns, true);
+  c.getBytes("meta", &m, sizeof m);                 // stays zero if absent (namespace too)
+  c.end();
+  bool due;
+  if (onUsb) {
+    if (!m.lastUsb || now - m.lastUsb > CHG_NEW_SESSION_S) m.start = now;   // plug-in
+    uint32_t in = now - m.start;
+    due = in < CHG_FAST_S || (in < CHG_STOP_S && now - m.lastRec >= CHG_SLOW_EVERY_S);
+    m.lastUsb = now;
+  } else {
+    if (!m.lastUsb) return;                         // never charged since the log began
+    uint32_t off = now - m.lastUsb;
+    due = off < CHG_RELAX_FAST_S || (off < CHG_RELAX_STOP_S && now - m.lastRec >= CHG_SLOW_EVERY_S);
+    if (!due) return;                               // on battery: no NVS write at all
+  }
+  if (due) {
+    ChargeRec r = { now, mV, cC, pwrSrc, wakeSrc };
+    if (ringAppend(CLOG, &r)) m.lastRec = now;
+    else Serial.println("charge log: NOT saved (NVS full)");
+  }
+  c.begin(CLOG.ns, false);
+  c.putBytes("meta", &m, sizeof m);
+  c.end();
+}
+
+static void dumpChargeLog() {
+  Serial.println("# charge log (USB: 2 min for 2 h, 10 min to 6 h; after unplug: 2 min for 30 min, 10 min to 2 h)");
+  Serial.println("n,utc_epoch,local,batt_mV,temp_c,usb,pwr_src,wake_src");
+  ringForEach(CLOG, [](uint32_t i, const void* p) {
+    ChargeRec r;  memcpy(&r, p, sizeof r);
+    time_t t = r.t;
+    struct tm lt;  localtime_r(&t, &lt);
+    char loc[24];  strftime(loc, sizeof loc, "%Y-%m-%d %H:%M:%S", &lt);
+    Serial.printf("%lu,%lu,%s,%u,%.2f,%u,0x%02X,0x%02X\n", (unsigned long)i + 1,
+                  (unsigned long)r.t, loc, r.batt_mV, r.temp_cC / 100.0f, r.pwrSrc & 1,
+                  r.pwrSrc, r.wakeSrc);
+  });
+  Serial.println("# end charge log");
+}
+
 static void dumpSyncLog();   // defined further down; declared here so LOG can call it
 
 static void dumpLog() {
@@ -388,6 +452,7 @@ static void dumpLog() {
                   (unsigned)ns.used_entries, (unsigned)ns.available_entries, NVS_LOW,
                   (unsigned)ns.total_entries);
   dumpSyncLog();
+  dumpChargeLog();
 }
 
 // ---- Wi-Fi (Lesson 05) ----
@@ -934,6 +999,7 @@ static void serialWindow(uint32_t ms, const std::function<void(int)>& onStep = n
         }
         else if (line == "CARD?") cardDetect(true);
         else if (line == "RLOG") dumpRefreshLog();
+        else if (line == "CHARGELOG") dumpChargeLog();
         else if (line == "LS 1" || line == "LS 0" || line == "LS?") {
           Preferences p; p.begin("ls", false);
           if (line != "LS?") {
@@ -1285,6 +1351,8 @@ void setup() {
     battLogAppend((uint32_t)now, (uint16_t)(battV * 1000), cC);
     st.lastBattLogAt = (uint32_t)now;
   }
+  if (simV <= 0)   // SIMV pretends USB is off and fakes the voltage: keep it out of the log
+    chargeLogMaybe((uint32_t)now, onUsb, (uint16_t)(battV * 1000), cC, src, wake);
 
   // Pages (Lesson 08): a power-button press opens a window in which side button A steps
   // to the next page and B to the previous one (A/B can't wake the board from L1). The
