@@ -1,0 +1,7 @@
+# charge 22 Nov 2026, host capture of the board's wake lines (tools/follow_serial.py); USB plugged in ~19:15 at ~4.09 V (last hourly row 18:49 4093 mV on battery)
+# Already in the constant-voltage phase: every wake reads 4.23 V. Times are the host clock (GMT). Every USB wake ends with 'E BOD: Brownout detector' at power-off.
+# Also seen during the log pull (no host time, ~19:17-19:19): #13965 timer 4.23 V, #13966 power-button 4.12 V (refreshed). Recording stopped 19:26 to flash the charge-log firmware.
+local,batt_mV,temp_c,usb,wake,wake_src,refreshed
+2026-11-22 19:21:25,4230,20.83,1,13967,0x01,0
+2026-11-22 19:23:27,4230,20.80,1,13968,0x01,0
+2026-11-22 19:25:28,4230,20.75,1,13969,0x01,0

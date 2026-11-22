@@ -1,0 +1,26 @@
+# charge profile 20 Nov 2026 (reconstructed, sparse): USB plugged in ~09:59, unplugged ~16:00-17:00 (not recorded)
+# Sources: hourly = board's hourly NVS battery log (pulled 22 Nov, docs/data/battery-2026-11-22.csv rows 425-438; no USB flag)
+#          serial = wake lines printed on USB during the 20 Nov session; no clock on these lines, so times are
+#                   estimated (+-1 min) from the 09:59 plug-in, the 120 s wake interval and the 10:19 log pull
+# usb on hourly rows is INFERRED from the voltage (flat ~4.20 V = still on USB; falling from 17:59 = unplugged; 16:59 unknown).
+# Readings on USB include the charger's push (IR rise): the 3.75 -> 3.90 V step at plug-in is not charge.
+# No charge current or charge-done flag is available (IP2315 is not on I2C; M5PM1 isCharging() is a stub).
+local,batt_mV,temp_c,usb,source,time_estimated,wake
+2026-11-20 08:55:59,3756,17.46,0,hourly,0,
+2026-11-20 09:56:18,3750,21.61,0,hourly,0,
+2026-11-20 10:02,3900,20.91,1,serial,1,12330
+2026-11-20 10:04,3960,20.84,1,serial,1,12331
+2026-11-20 10:06,3980,20.82,1,serial,1,12332
+2026-11-20 10:19,4070,20.97,1,serial,1,12338
+2026-11-20 10:57:33,4232,21.55,1,hourly,0,
+2026-11-20 11:57:37,4190,21.06,1,hourly,0,
+2026-11-20 12:57:56,4208,21.09,1,hourly,0,
+2026-11-20 13:58:17,4198,20.33,1,hourly,0,
+2026-11-20 14:58:37,4198,22.68,1,hourly,0,
+2026-11-20 15:58:54,4208,23.90,1,hourly,0,
+2026-11-20 16:59:10,4196,23.38,,hourly,0,
+2026-11-20 17:59:16,4190,23.36,0,hourly,0,
+2026-11-20 18:59:32,4182,22.61,0,hourly,0,
+2026-11-20 19:59:51,4178,21.51,0,hourly,0,
+2026-11-20 21:00:11,4176,20.90,0,hourly,0,
+2026-11-20 22:00:33,4172,20.67,0,hourly,0,
