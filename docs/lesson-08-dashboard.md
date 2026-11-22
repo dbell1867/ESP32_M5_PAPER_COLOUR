@@ -7,7 +7,7 @@ updated and how much battery is left — plus **pages** stepped through with a b
 dashboard, a **Wi-Fi login QR code**, and the photos from Lesson 07.
 
 > Audience note: Python / CircuitPython background, learning C++.
-> **Status:** complete. Firmware: `stages/lesson8_nvs_fix.cpp` (= `src/main.cpp`).
+> **Status:** complete. Firmware: `stages/lesson8_charge_log.cpp` (= `src/main.cpp`; Part 8, 22 Nov).
 >
 > **Privacy:** the Wi-Fi password is in the QR code. It is built on the board from the
 > credentials already in NVS, and is never printed, logged, screenshotted or committed.
@@ -385,6 +385,82 @@ computer has opened the port, so the real delay is still unmeasured (under 2 s).
 > **Lesson:** a wake flag and a status flag from the same chip aren't necessarily updated
 > together; when one implies the other, wait for the second instead of trusting a single read.
 
+## Part 8 — Update 22 Nov: a charge log
+
+**The gap:** the battery ran down to 3.75 V (20 Nov) and was charged, and the 22 Nov log
+(`docs/data/battery-2026-11-22.csv`) showed the charge as **one point**: 3.75 V at 09:56,
+4.23 V at 10:57. The hourly log samples once an hour and has no USB flag. The refresh log
+has both, but keeps only ~8 h, so by the next pull it was long overwritten. Nothing on the
+board recorded how the charge went.
+
+What could be recovered went into `docs/data/charge-2026-11-20.csv`: the hourly rows plus
+four wake lines from that day's serial capture, with their times estimated (the lines carry
+no clock) and the USB flag on hourly rows inferred from the voltage, both marked in the file:
+
+| Time (20 Nov) | Battery | |
+|---|---|---|
+| 09:56 | 3.75 V | on battery |
+| ~09:59 | | USB plugged in |
+| ~10:02 | 3.90 V | the step is the charger's push (IR rise), not charge |
+| ~10:19 | 4.07 V | |
+| 10:57 | 4.23 V | |
+| 11:57 – 15:58 | 4.19 – 4.21 V | flat: constant-voltage phase, or already done |
+| 17:59 → 22:00 | 4.19 → 4.17 V | unplugged (some time after 15:58) |
+
+So: up to ~4.2 V within the hour, then flat for hours. When the charge actually *finished*
+can't be seen from this.
+
+**What the board can measure:** only the battery voltage. The charger (IP2315) isn't on
+I2C, and the M5PM1 library's `isCharging()` is a stub, so there's no charge current and no
+"done" flag. The voltage read while charging is also high by the charger's push, which is
+why the readings on USB (4.23 V) and after unplugging differ. The settling after unplugging
+is therefore part of the profile too.
+
+**The fix: a charge log** (`clog`, a ring like Part 6's), sampled only around a charge:
+
+| When | Sample |
+|---|---|
+| on USB, first 2 h after plug-in | every wake (2 min) — the rising part |
+| on USB, 2 h – 6 h | every 10 min — the flat part |
+| on USB, after 6 h | none, so a day on the charger can't overwrite the start |
+| after unplugging, first 30 min | every wake — the relaxation to resting voltage |
+| after unplugging, 30 min – 2 h | every 10 min |
+| otherwise (on battery) | nothing, and no NVS write |
+
+A plug-in counts as a new charge when USB was absent for over 10 min. Each record is 10
+bytes: time, battery mV, temperature, and the raw `PWR_SRC` and `WAKE_SRC` bytes, in
+case another `PWR_SRC` bit turns out to mean "charging". A charge takes at most ~108
+samples; the ring keeps at least 125 (25 per blob × 6 blobs).
+
+**The storage budget (Part 6's lesson):** each 250-byte blob costs ~10 entries, so the
+charge log needs **~64 entries** at full size: from ~312 used / 192 available to about
+**376 / 128**, well above the 40-entry warning. Unlike the battery log it survives a fresh
+boot, so a flash doesn't lose a charge. It also skips samples while `SIMV` is set (faked
+voltage, USB pretended off) or while the clock is invalid.
+
+`LOG` prints the charge log at the end, so `tools/pull_log.py` collects it with no change;
+`CHARGELOG` prints it alone.
+
+**Result:** flashed 22 Nov 19:28 on USB; `CHARGELOG` straight after showed the first
+sample, `4230 mV, usb 1, PWR_SRC 0x07`. Bits 1 and 2 of `PWR_SRC` are also set; whether
+either changes when the charge ends or USB is removed is the first thing to look for. The
+first full profile needs a charge from low (~3.7–3.8 V), on any charger — the laptop isn't
+needed any more.
+
+**Two things seen on the way:**
+- **A charge-only cable** gave no service window at all: the laptop saw something on the
+  USB-C port (UCSI errors, `con4: failed to register partner alt modes`) but no USB
+  device. A data cable fixed it. No `/dev/ttyACM0` at all, even after a power-button press,
+  means suspect the cable before the firmware.
+- **`E BOD: Brownout detector was triggered`** follows every power-off **on USB** (also
+  in the 20 Nov capture). The PMIC cuts the ESP32's supply while USB keeps feeding it
+  partly, so it browns out instead of switching off cleanly. Harmless so far: no reset
+  loop, no lost data. It doesn't happen on battery.
+
+> **Lesson:** a log's sampling rate has to match the event it's for. An hourly log is
+> right for a two-week discharge and blind to a one-hour charge; rather than log
+> everything faster, log fast only around the event (here: USB in, and just after USB out).
+
 ## Command cheat-sheet (new in this lesson)
 
 | Command | What |
@@ -394,6 +470,7 @@ computer has opened the port, so the real delay is still unmeasured (under 2 s).
 | `WXNOW` | fetch the weather now |
 | `SHOT` | stream the dashboard's frame buffer (use `tools/screenshot.py`) |
 | `SHOT ICONS` | the same for a sheet of every weather icon (`tools/screenshot.py icons`) |
+| `CHARGELOG` | the charge log alone (Part 8; `LOG` also prints it at the end) |
 
 ## Files
 
@@ -407,7 +484,9 @@ computer has opened the port, so the real delay is still unmeasured (under 2 s).
 | `stages/lesson8_dashboard.cpp` | Part 3: the new layout |
 | `stages/lesson8_pages.cpp` | Part 4: pages and the QR code |
 | `stages/lesson8_final.cpp` | Part 5: experiments removed |
-| `stages/lesson8_nvs_fix.cpp` | Part 6: packed NVS logs, save guards, storage warning (= `src/main.cpp`) |
+| `stages/lesson8_nvs_fix.cpp` | Part 6: packed NVS logs, save guards, storage warning |
+| `stages/lesson8_charge_log.cpp` | Part 8: + Part 7's fixes and the charge log (= `src/main.cpp`) |
+| `docs/data/charge-2026-11-*.csv` | Part 8: the charge profiles of 20 Nov (reconstructed) and 22 Nov |
 
 ## Glossary
 
