@@ -32,6 +32,8 @@
 //   SHOT  SHOT ICONS               dashboard / icon sheet as hex (tools/screenshot.py [icons])
 //   SIMV 3.40 / SIMV 0             simulate a battery voltage (test hook)
 //   LS 1 / LS 0 / LS?              force light sleep during refreshes on USB (test)
+//   PMBTN                          M5PM1 power/wake/IRQ registers + 20 s of changes (press
+//                                  power during it; a press while awake can cut the power)
 #include <Arduino.h>
 // SD.h BEFORE M5Unified.h: M5GFX decides at include time whether to compile its
 // file-reading support (drawJpgFile(SD, ...)) by checking which FS headers it has
@@ -1000,6 +1002,28 @@ static void serialWindow(uint32_t ms, const std::function<void(int)>& onStep = n
         else if (line == "CARD?") cardDetect(true);
         else if (line == "RLOG") dumpRefreshLog();
         else if (line == "CHARGELOG") dumpChargeLog();
+        else if (line == "PMBTN") {   // diagnostic (23 Nov): does the PMIC see the power button?
+          static const uint8_t regs[] = { 0x04, 0x05, 0x06, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45 };
+          uint8_t prev[sizeof regs];
+          for (size_t i = 0; i < sizeof regs; ++i) {
+            pmRead(regs[i], &prev[i], 1);
+            Serial.printf("PM 0x%02X = 0x%02X\n", regs[i], prev[i]);
+          }
+          Serial.println("PMBTN: press the power button now (watching 20 s)");
+          uint32_t t0 = millis();
+          while (millis() - t0 < 20000) {
+            for (size_t i = 0; i < sizeof regs; ++i) {
+              uint8_t v;
+              if (pmRead(regs[i], &v, 1) && v != prev[i]) {
+                Serial.printf("+%5lu ms  PM 0x%02X: 0x%02X -> 0x%02X\n",
+                              (unsigned long)(millis() - t0), regs[i], prev[i], v);
+                prev[i] = v;
+              }
+            }
+            delay(20);
+          }
+          Serial.println("PMBTN: done");
+        }
         else if (line == "LS 1" || line == "LS 0" || line == "LS?") {
           Preferences p; p.begin("ls", false);
           if (line != "LS?") {

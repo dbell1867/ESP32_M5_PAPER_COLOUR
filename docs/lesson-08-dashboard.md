@@ -7,7 +7,7 @@ updated and how much battery is left — plus **pages** stepped through with a b
 dashboard, a **Wi-Fi login QR code**, and the photos from Lesson 07.
 
 > Audience note: Python / CircuitPython background, learning C++.
-> **Status:** complete. Firmware: `stages/lesson8_charge_log.cpp` (= `src/main.cpp`; Part 8, 22 Nov).
+> **Status:** complete. Firmware: `stages/lesson8_charge_log.cpp` (= `src/main.cpp`; Parts 8-9, 22-23 Nov).
 >
 > **Privacy:** the Wi-Fi password is in the QR code. It is built on the board from the
 > credentials already in NVS, and is never printed, logged, screenshotted or committed.
@@ -461,6 +461,56 @@ needed any more.
 > right for a two-week discharge and blind to a one-hour charge; rather than log
 > everything faster, log fast only around the event (here: USB in, and just after USB out).
 
+## Part 9 — Update 23 Nov: "the buttons don't change pages any more"
+
+**Symptom:** the morning after Part 8's flash, pressing power and then A gave no blue
+light and no page change, on USB and on battery. The obvious suspect was the new firmware.
+
+**Evidence first:**
+- A 15-min serial capture saw only timer wakes (`WAKE_SRC 0x01`). The window that A/B
+  need never opened.
+- The kernel log at the moment of the press (12:15) showed the board connecting and
+  dropping **four times in 30 s**, with a brownout, and the wake counter never moved: the
+  board was switched on, and then off again before it finished booting.
+- Nothing in the firmware configures the power button (it belongs to the M5PM1), the
+  Part 8 change doesn't touch it, and the libraries are pinned and unchanged since October.
+
+**A diagnostic command, `PMBTN`:** prints the M5PM1's power, wake and IRQ registers
+(0x04–0x06, 0x40–0x45), then for 20 s prints every change while you press the button.
+Sent in the flash window after uploading it:
+
+```
+PM 0x42 = 0x00                                  <- button IRQ status, idle
++ 1463 ms  PM 0x42: 0x00 -> 0x02                <- every press seen ...
++ 1490 ms  PM 0x42: 0x02 -> 0x00                <- ... and cleared by the chip ~25 ms later
+   (6 presses in 8 s, all seen)
+[12:21:38] E BOD: Brownout detector was triggered   <- power cut WHILE AWAKE
+[12:21:40] wake #477 (button/USB, WAKE_SRC 0x0C)    <- the next press: a clean wake + window
+```
+
+**Why:** the button works, but **a press while the board is awake makes the M5PM1 cut
+the power** (here a hold, or one tap too many). Repeated taps, or holding the button
+"to make sure" (which I had suggested), switch the board on and straight off again, so the
+blue window never appears. That fits the earlier "first press ignored" cases too.
+
+**Result:** board left alone for 2 min, **one short tap** → blue LED at once → B
+(previous: dashboard → dog photo), then A (back to the dashboard). Nothing needed fixing
+in the firmware.
+
+**How to use it:** one short tap on power, wait for blue, then A (next) / B (previous).
+Don't touch power again while it's blue or refreshing. (A is the button nearer the corner;
+B is the second one.)
+
+**Still open:** button wakes now report `WAKE_SRC 0x0C` (bit 3 as well as the power-button
+bit 2); on 20 and 22 Nov they were `0x04`. It changes nothing in the firmware's decisions
+(it tests bit 2), but what bit 3 means isn't known yet. `PMBTN` stays in the firmware for
+the next time the button misbehaves.
+
+> **Lesson:** when "the new firmware broke X", first check that X's input reaches the
+> board at all. Here one register watch showed the button worked, and the failure came
+> from how it was being pressed. Also: be careful telling someone to "hold it longer" on a
+> button whose long press means "off".
+
 ## Command cheat-sheet (new in this lesson)
 
 | Command | What |
@@ -471,6 +521,7 @@ needed any more.
 | `SHOT` | stream the dashboard's frame buffer (use `tools/screenshot.py`) |
 | `SHOT ICONS` | the same for a sheet of every weather icon (`tools/screenshot.py icons`) |
 | `CHARGELOG` | the charge log alone (Part 8; `LOG` also prints it at the end) |
+| `PMBTN` | M5PM1 power/wake/IRQ registers, then 20 s of changes while you press power (Part 9) |
 
 ## Files
 
@@ -485,7 +536,7 @@ needed any more.
 | `stages/lesson8_pages.cpp` | Part 4: pages and the QR code |
 | `stages/lesson8_final.cpp` | Part 5: experiments removed |
 | `stages/lesson8_nvs_fix.cpp` | Part 6: packed NVS logs, save guards, storage warning |
-| `stages/lesson8_charge_log.cpp` | Part 8: + Part 7's fixes and the charge log (= `src/main.cpp`) |
+| `stages/lesson8_charge_log.cpp` | Part 8: + Part 7's fixes and the charge log; Part 9's `PMBTN` (= `src/main.cpp`) |
 | `docs/data/charge-2026-11-*.csv` | Part 8: the charge profiles of 20 Nov (reconstructed) and 22 Nov |
 
 ## Glossary
